@@ -1,0 +1,31 @@
+[Unit]
+Description=AGY Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agybot
+Group=agybot
+WorkingDirectory=/opt/agy-telegram
+EnvironmentFile=/etc/agy-telegram.env
+ExecStart=/usr/bin/node /opt/agy-telegram/src/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# Keep AGY and the bot from consuming the whole VPS.
+CPUQuota=100%
+MemoryMax=1536M
+TasksMax=512
+
+# Basic service hardening. ReadWritePaths must include AGY caches if the
+# authenticated service user needs them; review before deployment.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/agy-telegram /srv/agy-workspaces
+
+[Install]
+WantedBy=multi-user.target

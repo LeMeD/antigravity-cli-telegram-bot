@@ -1,0 +1,15 @@
+{
+  "name": "agy-telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A separate Telegram gateway for the AGY CLI.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
