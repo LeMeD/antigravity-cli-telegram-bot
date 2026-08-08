@@ -1,7 +1,7 @@
 {
   "name": "agy-telegram",
   "version": "0.1.0",
-  "description": "A separate Telegram gateway for the AGY CLI.",
+  "description": "Connect the Antigravity CLI to Telegram through a secure, allowlisted bot gateway.",
   "keywords": [
     "telegram",
     "bot",
