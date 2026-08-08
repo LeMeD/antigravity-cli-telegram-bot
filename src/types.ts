@@ -1,0 +1,107 @@
+export type ChatId = number | string;
+
+export interface ModelOption { id: string; label: string }
+export interface TelegramUser { id: number }
+export interface TelegramChat { id: number; type?: string }
+export interface TelegramMessage { message_id: number; chat: TelegramChat; from?: TelegramUser; text?: string }
+export interface TelegramCallbackQuery { id: string; from: TelegramUser; data?: string; message?: TelegramMessage }
+export interface TelegramUpdate { update_id: number; message?: TelegramMessage; callback_query?: TelegramCallbackQuery }
+export interface InlineButton { text: string; callback_data: string }
+export interface InlineKeyboardMarkup { inline_keyboard: InlineButton[][] }
+export interface ReplyKeyboardMarkup {
+  keyboard: string[][];
+  resize_keyboard?: boolean;
+  is_persistent?: boolean;
+  input_field_placeholder?: string;
+}
+export type ReplyMarkup = InlineKeyboardMarkup | ReplyKeyboardMarkup;
+
+export interface SessionSettings {
+  model: string | null;
+  effort: "low" | "medium" | "high";
+  mode: "plan" | "accept-edits";
+  sandbox: boolean;
+}
+
+export interface Usage {
+  input_tokens?: number;
+  output_tokens?: number;
+  thinking_tokens?: number;
+  cache_read_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface RunStats {
+  model: string | null;
+  usage: Usage | null;
+  durationMs: number | null;
+  numTurns: number | null;
+  toolCalls: number;
+  status: string;
+  completedAt: string;
+}
+
+export interface SessionState {
+  conversationId?: string;
+  settings?: Partial<SessionSettings>;
+  lastRun?: RunStats;
+  usageTotals?: Usage | null;
+  updatedAt?: string;
+}
+
+export interface PersistedState { updateOffset: number; sessions: Record<string, SessionState> }
+
+export interface AgyConfig {
+  bin: string;
+  workspace: string;
+  project: string;
+  mode: "plan" | "accept-edits";
+  sandbox: boolean;
+  allowSandboxDisable: boolean;
+  model: string;
+  effort: "low" | "medium" | "high";
+  allowedModels: string[];
+  timeoutMs: number;
+  maxOutputBytes: number;
+}
+
+export interface AppConfig {
+  telegram: { token: string; allowedUserIds: string[]; allowedChatIds: string[]; privateOnly: boolean; maxMessageChars: number };
+  agy: AgyConfig;
+  queue: { maxSize: number };
+  stateFile: string;
+  tempDir: string;
+  logLevel: string;
+}
+
+export interface StreamEvent extends Record<string, unknown> {
+  event?: string;
+  conversation_id?: string;
+  init?: Record<string, unknown>;
+  step_update?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+}
+
+export interface AgyResult {
+  text: string;
+  parsed: StreamEvent | Record<string, unknown> | null;
+  events: StreamEvent[];
+  conversationId: string | null;
+  model: string | null;
+  usage: Usage | null;
+  durationMs: number | null;
+  numTurns: number | null;
+  toolCalls: number;
+  status: string | null;
+}
+
+export interface RunnerOptions {
+  signal?: AbortSignal;
+  onEvent?: (event: StreamEvent) => void;
+  model?: string | null;
+  effort?: "low" | "medium" | "high";
+  mode?: "plan" | "accept-edits";
+  sandbox?: boolean;
+  project?: string;
+  outputFormat?: string;
+}

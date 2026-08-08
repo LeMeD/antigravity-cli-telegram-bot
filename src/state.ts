@@ -1,0 +1,44 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { ChatId, PersistedState, SessionState } from "./types.js";
+
+export class StateStore {
+  private data: PersistedState = { updateOffset: 0, sessions: {} };
+  private writeChain: Promise<void> = Promise.resolve();
+
+  public constructor(private readonly file: string) {}
+
+  public async load(): Promise<void> {
+    try {
+      const parsed: unknown = JSON.parse(await fs.readFile(this.file, "utf8"));
+      if (!parsed || typeof parsed !== "object") return;
+      const value = parsed as Partial<PersistedState>;
+      this.data = {
+        updateOffset: Number.isSafeInteger(value.updateOffset) ? value.updateOffset as number : 0,
+        sessions: value.sessions && typeof value.sessions === "object" ? value.sessions as Record<string, SessionState> : {},
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  public session(chatId: ChatId): SessionState | null { return this.data.sessions[String(chatId)] || null; }
+  public async resetSession(chatId: ChatId): Promise<void> { delete this.data.sessions[String(chatId)]; await this.save(); }
+  public async setSession(chatId: ChatId, session: SessionState): Promise<void> {
+    this.data.sessions[String(chatId)] = { ...this.data.sessions[String(chatId)], ...session };
+    await this.save();
+  }
+  public async setOffset(offset: number): Promise<void> { this.data.updateOffset = offset; await this.save(); }
+  public get offset(): number { return this.data.updateOffset; }
+
+  private async save(): Promise<void> {
+    this.writeChain = this.writeChain.catch(() => undefined).then(async () => {
+      await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      const temporary = `${this.file}.${process.pid}.tmp`;
+      await fs.writeFile(temporary, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
+      await fs.rename(temporary, this.file);
+      await fs.chmod(this.file, 0o600);
+    });
+    return this.writeChain;
+  }
+}

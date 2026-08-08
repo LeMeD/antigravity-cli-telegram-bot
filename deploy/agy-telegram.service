@@ -10,7 +10,7 @@ Group=agybot
 WorkingDirectory=/opt/agy-telegram
 EnvironmentFile=/etc/agy-telegram.env
 Environment=HOME=/var/lib/agybot
-ExecStart=/usr/bin/node /opt/agy-telegram/src/index.js
+ExecStart=/usr/bin/node /opt/agy-telegram/dist/index.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

@@ -1,0 +1,33 @@
+import type { ChatId } from "./types.js";
+
+export interface QueueJob { chatId: ChatId; prompt: string; id?: string; enqueuedAt?: number }
+export interface QueueStatus { active: (QueueJob & { cancel: () => boolean }) | null; queued: number; totalQueued: number }
+type Worker = (job: QueueJob, isCancelled: () => boolean) => Promise<void>;
+
+export class JobQueue {
+  private readonly pending: QueueJob[] = [];
+  private active: (QueueJob & { cancel: () => boolean }) | null = null;
+  private sequence = 0;
+  public constructor(private readonly maxSize: number, private readonly worker: Worker) {}
+  public enqueue(job: QueueJob): { accepted: boolean; reason?: string; jobId?: string; position?: number } {
+    if (this.pending.length >= this.maxSize) return { accepted: false, reason: "queue_full" };
+    const queued = { ...job, id: `job-${++this.sequence}`, enqueuedAt: Date.now() };
+    this.pending.push(queued); void this.drain();
+    return { accepted: true, jobId: queued.id, position: this.pending.length };
+  }
+  public cancelForChat(chatId: ChatId): { removed: number; activeCancelled: boolean } {
+    const before = this.pending.length;
+    this.pending.splice(0, this.pending.length, ...this.pending.filter((job) => String(job.chatId) !== String(chatId)));
+    const activeCancelled = this.active && String(this.active.chatId) === String(chatId) ? this.active.cancel() : false;
+    return { removed: before - this.pending.length, activeCancelled };
+  }
+  public statusForChat(chatId: ChatId): QueueStatus {
+    return { active: this.active && String(this.active.chatId) === String(chatId) ? this.active : null, queued: this.pending.filter((job) => String(job.chatId) === String(chatId)).length, totalQueued: this.pending.length };
+  }
+  private async drain(): Promise<void> {
+    if (this.active || this.pending.length === 0) return;
+    const job = this.pending.shift()!; let cancelled = false;
+    this.active = { ...job, cancel: () => { cancelled = true; return true; } };
+    try { await this.worker(job, () => cancelled); } finally { this.active = null; void this.drain(); }
+  }
+}

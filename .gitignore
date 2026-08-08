@@ -6,4 +6,5 @@ tmp/
 logs/
 node_modules/
 coverage/
+dist/
 *.log
