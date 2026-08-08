@@ -9,6 +9,7 @@ User=agybot
 Group=agybot
 WorkingDirectory=/opt/agy-telegram
 EnvironmentFile=/etc/agy-telegram.env
+Environment=HOME=/var/lib/agybot
 ExecStart=/usr/bin/node /opt/agy-telegram/src/index.js
 Restart=always
 RestartSec=5
@@ -25,7 +26,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/agy-telegram /srv/agy-workspaces
+ReadWritePaths=/var/lib/agybot /var/lib/agy-telegram /srv/agy-workspaces
 
 [Install]
 WantedBy=multi-user.target
