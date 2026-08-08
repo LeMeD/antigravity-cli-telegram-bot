@@ -9,6 +9,8 @@ streamed progress, model controls, and a hardened systemd deployment.
 
 [![Node.js 20+](https://img.shields.io/badge/node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![CI](https://github.com/ardiannurcahya/agy-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/agy-cli-telegram-bot/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agy-telegram-bot?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram-bot)
 [![Tests](https://img.shields.io/badge/tests-13%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
@@ -28,6 +30,7 @@ systemd service under a dedicated Unix user.
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [Install From npm](#install-from-npm)
 - [Telegram Commands](#telegram-commands)
 - [Configuration](#configuration)
 - [Production Deployment](#production-deployment)
@@ -93,6 +96,9 @@ dedicated `agybot` user. Running the bot as root is not recommended.
 
 ## Quick Start
 
+The recommended production installation uses the npm package. A source
+checkout is only needed for development or contributing.
+
 ### 1. Create and configure the bot
 
 Create a bot with [BotFather], then copy the token into a local environment
@@ -118,7 +124,7 @@ Telegram numeric user IDs can be obtained using a trusted Telegram ID bot or
 from an update received while diagnosing a controlled test deployment. Do not
 use a username as the allowlist value.
 
-### 2. Install and build
+### 2. Install dependencies and build from source
 
 ```bash
 npm ci
@@ -126,7 +132,7 @@ npm run build
 npm test
 ```
 
-### 3. Start locally
+### 3. Start locally from source
 
 ```bash
 set -a
@@ -137,6 +143,27 @@ npm start
 
 Open the bot in Telegram and send `/start`. Use `/menu` to refresh the control
 keyboard or send a normal text message to submit a prompt to AGY.
+
+## Install From npm
+
+Install the published package globally. This provides the `agy-telegram`
+command and includes the compiled runtime, systemd template, environment
+template, README, and license.
+
+```bash
+sudo npm install --global agy-telegram-bot
+agy-telegram --version
+```
+
+For a configured bot, run:
+
+```bash
+agy-telegram
+```
+
+For a production service, use the systemd instructions below. The package
+installs the executable at `/usr/bin/agy-telegram` when npm uses the default
+system prefix.
 
 ## Telegram Commands
 
@@ -227,7 +254,6 @@ environment template at [`deploy/agy-telegram.env.example`](./deploy/agy-telegra
 
 ```bash
 sudo useradd --system --home-dir /var/lib/agybot --create-home --shell /usr/sbin/nologin agybot
-sudo install -d -o agybot -g agybot -m 0750 /opt/agy-telegram
 sudo install -d -o agybot -g agybot -m 0750 /var/lib/agy-telegram/tmp
 sudo install -d -o agybot -g agybot -m 0750 /srv/agy-workspaces/default
 ```
@@ -239,21 +265,25 @@ can access the configured workspace and AGY credential cache:
 sudo -u agybot -H /usr/local/bin/agy --version
 ```
 
-### 2. Install the gateway
-
-Run these commands from a checked-out copy of this repository:
+### 2. Install the npm package
 
 ```bash
-sudo cp -a src package.json package-lock.json tsconfig.json /opt/agy-telegram/
-cd /opt/agy-telegram
-sudo -u agybot npm ci
-sudo -u agybot npm run build
+sudo npm install --global agy-telegram-bot
+agy-telegram --help
+```
+
+Use the package metadata to locate the installed deployment templates:
+
+```bash
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+ls "$NPM_PACKAGE_DIR/deploy"
 ```
 
 ### 3. Install and edit the service environment
 
 ```bash
-sudo install -m 0600 -o root -g root deploy/agy-telegram.env.example /etc/agy-telegram.env
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+sudo install -m 0600 -o root -g root "$NPM_PACKAGE_DIR/deploy/agy-telegram.env.example" /etc/agy-telegram.env
 sudoedit /etc/agy-telegram.env
 ```
 
@@ -263,7 +293,8 @@ one or more numeric Telegram user IDs.
 ### 4. Enable the service
 
 ```bash
-sudo install -m 0644 deploy/agy-telegram.service /etc/systemd/system/agy-telegram.service
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+sudo install -m 0644 "$NPM_PACKAGE_DIR/deploy/agy-telegram.service" /etc/systemd/system/agy-telegram.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now agy-telegram
 sudo systemctl status agy-telegram
@@ -305,8 +336,37 @@ Generated output and dependencies are intentionally ignored by Git.
 npm ci
 npm run build
 npm test
+npm run pack:check
 git diff --check
 ```
+
+The package can be tested locally before publishing:
+
+```bash
+npm pack
+npm install --global ./agy-telegram-bot-0.1.0.tgz
+```
+
+Do not commit the generated `.tgz` file. It is ignored by Git and should be
+removed after a local installation test.
+
+## npm Publishing
+
+GitHub Actions runs on every pull request and push to `main`. The CI workflow
+tests Node.js 20 and 22, builds the TypeScript output, runs the test suite, and
+uploads an npm tarball as a workflow artifact.
+
+Publishing is triggered by pushing a semantic version tag such as `v0.2.0`:
+
+```bash
+npm version minor
+git push origin main --follow-tags
+```
+
+Before the first publish, add an npm access token with package publish access
+as the repository secret `NPM_TOKEN`. The publish workflow verifies the package
+contents and publishes with npm provenance enabled. Keep the npm token out of
+commits, logs, and command arguments.
 
 Before opening a pull request:
 
@@ -330,6 +390,7 @@ src/
   types.ts        Shared TypeScript types
 test/             Node test runner tests
 deploy/           systemd unit and deployment environment template
+.github/workflows/ CI, package build, and npm publish workflows
 ```
 
 ## Limitations

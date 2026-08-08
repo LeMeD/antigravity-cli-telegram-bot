@@ -1,13 +1,44 @@
 {
   "name": "agy-telegram-bot",
   "version": "0.1.0",
-  "private": true,
   "description": "A separate Telegram gateway for the AGY CLI.",
+  "keywords": [
+    "telegram",
+    "bot",
+    "agy",
+    "antigravity",
+    "cli",
+    "gateway"
+  ],
+  "author": "ardiannurcahya",
   "type": "module",
+  "bin": {
+    "agy-telegram": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "deploy",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ardiannurcahya/agy-cli-telegram-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ardiannurcahya/agy-cli-telegram-bot/issues"
+  },
+  "homepage": "https://github.com/ardiannurcahya/agy-cli-telegram-bot#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "tsx --test test/*.test.ts"
+    "start": "node dist/cli.js",
+    "test": "tsx --test test/*.test.ts",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=20"

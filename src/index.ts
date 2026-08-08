@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import process from "node:process";
 import { formatStepUpdate, runAgy } from "./agy-runner.js";
 import { loadConfig, isEffort, isMode } from "./config.js";
