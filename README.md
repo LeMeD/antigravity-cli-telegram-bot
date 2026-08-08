@@ -9,8 +9,8 @@ streamed progress, model controls, and a hardened systemd deployment.
 
 [![Node.js 20+](https://img.shields.io/badge/node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![CI](https://github.com/ardiannurcahya/agy-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/agy-cli-telegram-bot/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/agy-telegram-bot?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram-bot)
+[![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
 [![Tests](https://img.shields.io/badge/tests-13%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
@@ -151,7 +151,7 @@ command and includes the compiled runtime, systemd template, environment
 template, README, and license.
 
 ```bash
-sudo npm install --global agy-telegram-bot
+sudo npm install --global agy-telegram
 agy-telegram --version
 ```
 
@@ -268,21 +268,21 @@ sudo -u agybot -H /usr/local/bin/agy --version
 ### 2. Install the npm package
 
 ```bash
-sudo npm install --global agy-telegram-bot
+sudo npm install --global agy-telegram
 agy-telegram --help
 ```
 
 Use the package metadata to locate the installed deployment templates:
 
 ```bash
-NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram"
 ls "$NPM_PACKAGE_DIR/deploy"
 ```
 
 ### 3. Install and edit the service environment
 
 ```bash
-NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram"
 sudo install -m 0600 -o root -g root "$NPM_PACKAGE_DIR/deploy/agy-telegram.env.example" /etc/agy-telegram.env
 sudoedit /etc/agy-telegram.env
 ```
@@ -293,7 +293,7 @@ one or more numeric Telegram user IDs.
 ### 4. Enable the service
 
 ```bash
-NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram-bot"
+NPM_PACKAGE_DIR="$(npm root --global)/agy-telegram"
 sudo install -m 0644 "$NPM_PACKAGE_DIR/deploy/agy-telegram.service" /etc/systemd/system/agy-telegram.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now agy-telegram
@@ -344,7 +344,7 @@ The package can be tested locally before publishing:
 
 ```bash
 npm pack
-npm install --global ./agy-telegram-bot-0.1.0.tgz
+npm install --global ./agy-telegram-0.1.0.tgz
 ```
 
 Do not commit the generated `.tgz` file. It is ignored by Git and should be

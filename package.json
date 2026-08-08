@@ -1,5 +1,5 @@
 {
-  "name": "agy-telegram-bot",
+  "name": "agy-telegram",
   "version": "0.1.0",
   "description": "A separate Telegram gateway for the AGY CLI.",
   "keywords": [
@@ -24,12 +24,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ardiannurcahya/agy-cli-telegram-bot.git"
+    "url": "https://github.com/ardiannurcahya/antigravity-cli-telegram-bot.git"
   },
   "bugs": {
-    "url": "https://github.com/ardiannurcahya/agy-cli-telegram-bot/issues"
+    "url": "https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues"
   },
-  "homepage": "https://github.com/ardiannurcahya/agy-cli-telegram-bot#readme",
+  "homepage": "https://github.com/ardiannurcahya/antigravity-cli-telegram-bot#readme",
   "publishConfig": {
     "access": "public"
   },
