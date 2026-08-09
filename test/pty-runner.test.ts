@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cleanAnsi, parseUsageQuota, parseCredits, runPtyCommand } from "../src/pty-runner.js";
+import { cleanAnsi, parseUsageQuota, parseCredits, parseContext, runPtyCommand } from "../src/pty-runner.js";
 
 test("cleanAnsi removes terminal escape codes, OSC sequences, and kitty sequences", () => {
   const raw = "\x1b[>4m\x1b[=0;1u\x1b[?2004h\x1b]0;Terminal Title\x07\x1b[32mHello\x1b[0m \x1b[1;34mWorld\x1b[0m\r\n\x1b[2J\x1b[H\x1b[?2004l";
@@ -67,6 +67,20 @@ Purchase link: https://buy.antigravity.google.com/credits
 test("parseCredits rejects empty / irrelevant output", () => {
   const splash = `Antigravity CLI (c) 2026 Google`;
   assert.throws(() => parseCredits(splash), /did not produce a Credits report/);
+});
+
+test("parseContext formats official active-context output", () => {
+  const parsed = parseContext("/context Visualize current context usage\n└ Context Usage\n◉ ◉ ◉     Gemini 3.6 Flash (High) · 146.3k/1.0M tokens\n□ □ □     (14.0%)\n□ □ □     Token usage by category\n◉ User messages: 533 tokens (0.1%)\n◉ Agent responses: 97.5k tokens (9.3%)\n□ Free space: 902.2k (86.0%)\nCheckpoints (3) · /rewind\n└ Checkpoint 3 (active, in context): steps 117–304\nArtifact files · /artifact\n└ ~/.gemini/brain/plan.md: 1.6k tokens\nRelated: /artifact");
+  assert.match(parsed, /Active Context/);
+  assert.match(parsed, /146\.3k\/1\.0M tokens/);
+  assert.match(parsed, /Free space: 902\.2k/);
+  assert.match(parsed, /Token breakdown/);
+  assert.match(parsed, /<b>Artifacts:<\/b> 1/);
+  assert.doesNotMatch(parsed, /◉ ◉ ◉/);
+});
+
+test("parseContext rejects output without active context data", () => {
+  assert.throws(() => parseContext("Antigravity CLI ready"), /Active Context report/);
 });
 
 test("parseUsageQuota preserves decimal percentages from AGY progress output", () => {

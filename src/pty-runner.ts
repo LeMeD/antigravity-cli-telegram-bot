@@ -167,6 +167,38 @@ export function parseCredits(rawOutput: string): string {
   return lines.join("\n").trim();
 }
 
+export function parseContext(rawOutput: string): string {
+  const text = cleanAnsi(rawOutput).trim();
+  // The TUI autocomplete list can mention /context before the actual panel.
+  // The final Context Usage occurrence is the rendered command result.
+  const contextMatches = [...text.matchAll(/(?:└\s*)?Context Usage/gi)];
+  const contextStart = contextMatches.length ? contextMatches[contextMatches.length - 1].index ?? -1 : -1;
+  if (contextStart < 0) {
+    throw new Error(`AGY did not produce an Active Context report.\n\nCaptured output:\n${text.slice(0, 500) || "(empty)"}`);
+  }
+  const panel = text.slice(contextStart).split(/\n\s*(?:Related:|esc to cancel)/i)[0];
+  const lines = panel.split("\n").map((line) => line.replace(/^[□◉⛁⊠\s]+/, "").trim()).filter(Boolean);
+  const modelLine = lines.find((line) => /tokens\s*$/i.test(line) || /tokens\s*\(/i.test(line));
+  const usageLine = lines.find((line) => /^estimated usage/i.test(line));
+  const categories = lines
+    .filter((line) => /^(?:User messages|Agent responses|Tool calls|System prompt|System tools|Skills|Subagents):/i.test(line))
+    .map((line) => line);
+  const freeLine = lines.find((line) => /^free space:/i.test(line));
+  const checkpointLine = lines.find((line) => /^checkpoints?/i.test(line));
+  const checkpointDetail = lines.find((line) => /^└?\s*checkpoint \d+/i.test(line));
+  const artifacts = lines.filter((line) => line.startsWith("└ ") && /\.\w+:\s*[\d.]+k? tokens$/i.test(line));
+  const result = [
+    "🧠 <b>Active Context</b>",
+    modelLine,
+    usageLine,
+    categories.length ? `<b>Token breakdown</b>\n${categories.map((line) => `• ${line}`).join("\n")}` : null,
+    freeLine,
+    checkpointLine && checkpointDetail ? `${checkpointLine} · ${checkpointDetail}` : checkpointLine,
+    artifacts.length ? `<b>Artifacts:</b> ${artifacts.length}` : null,
+  ].filter((line): line is string => Boolean(line));
+  return result.join("\n");
+}
+
 const PTY_SCRIPT = `
 import pty, os, sys, time, select, signal, re, struct, fcntl, termios
 
@@ -180,7 +212,8 @@ def clean_ansi(text):
 bin_path = sys.argv[1]
 cwd = sys.argv[2]
 cmd_to_send = sys.argv[3]
-timeout_sec = float(sys.argv[4]) if len(sys.argv) > 4 else 25.0
+conversation_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+timeout_sec = float(sys.argv[5]) if len(sys.argv) > 5 else 25.0
 
 master, slave = pty.openpty()
 pid = os.fork()
@@ -209,7 +242,12 @@ if pid == 0:
     for k in ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USER_IDS', 'TELEGRAM_ALLOWED_CHAT_IDS']:
         env.pop(k, None)
     try:
-        os.execvpe(bin_path, [bin_path], env)
+        argv = [bin_path]
+        if conversation_id:
+            # Explicitly enter the interactive TUI when resuming a conversation.
+            # Without this flag AGY can print the previous response and exit.
+            argv += ['--conversation', conversation_id, '--prompt-interactive', '']
+        os.execvpe(bin_path, argv, env)
     except Exception as e:
         sys.stderr.write(f"exec failed: {e}\\n")
     sys.exit(1)
@@ -245,7 +283,21 @@ try:
             sys.stdout.write("Error: AGY CLI is not signed in. Please authenticate AGY on the server.\\n")
             sys.exit(0)
 
-        # Handle trust / confirmation dialog
+        # Handle trust / confirmation dialog. Newer AGY versions use an
+        # arrow-key menu with the first option already selected.
+        if not handled_trust and 'yes, i trust this folder' in lower_cleaned and 'no, exit' in lower_cleaned:
+            time.sleep(0.3)
+            try:
+                os.write(master, b'\\r')
+            except OSError:
+                pass
+            handled_trust = True
+            prompt_first_seen = None
+            last_data_time = time.time()
+            time.sleep(0.4)
+            continue
+
+        # Handle legacy trust / confirmation dialog
         if not handled_trust and ('trust' in lower_cleaned or 'do you trust' in lower_cleaned) and ('[y/n]' in lower_cleaned or 'yes/no' in lower_cleaned or '?' in lower_cleaned):
             time.sleep(0.3)
             try:
@@ -282,7 +334,8 @@ try:
         # After sending command
         if sent_command:
             has_quota_result = ('models & quota' in lower_cleaned) or ('weekly limit' in lower_cleaned) or ('credits remaining' in lower_cleaned) or ('g1 credits' in lower_cleaned) or ('balance:' in lower_cleaned)
-            if has_quota_result:
+            has_context_result = ('active context' in lower_cleaned) or ('context window' in lower_cleaned) or ('estimated tokens' in lower_cleaned)
+            if has_quota_result or has_context_result:
                 if time.time() - last_data_time >= 0.8:
                     break
 
@@ -317,11 +370,12 @@ sys.stdout.write(clean_ansi(decoded))
 export interface PtyRunnerOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
+  conversationId?: string;
 }
 
 export function runPtyCommand(
   config: AgyConfig,
-  command: "/usage" | "/credits",
+  command: "/usage" | "/credits" | "/context",
   options: PtyRunnerOptions = {}
 ): Promise<string> {
   const { timeoutMs = 25_000, signal } = options;
@@ -332,7 +386,7 @@ export function runPtyCommand(
     }
 
     const timeoutSec = Math.max(2, Math.ceil(timeoutMs / 1000));
-    const child = spawn("python3", ["-c", PTY_SCRIPT, config.bin, config.workspace, command, String(timeoutSec)], {
+    const child = spawn("python3", ["-c", PTY_SCRIPT, config.bin, config.workspace, command, options.conversationId || "", String(timeoutSec)], {
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
