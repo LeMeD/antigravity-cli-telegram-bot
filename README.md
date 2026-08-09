@@ -431,7 +431,7 @@ The package can be tested locally before publishing:
 
 ```bash
 npm pack
-npm install --global ./agy-telegram-0.1.2.tgz
+npm install --global ./agy-telegram-0.1.3.tgz
 ```
 
 Do not commit the generated `.tgz` file. It is ignored by Git and should be
