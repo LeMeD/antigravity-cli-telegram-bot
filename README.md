@@ -11,7 +11,7 @@ streamed progress, model controls, and a hardened systemd deployment.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-20%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -387,7 +387,7 @@ The package can be tested locally before publishing:
 
 ```bash
 npm pack
-npm install --global ./agy-telegram-0.1.0.tgz
+npm install --global ./agy-telegram-0.1.2.tgz
 ```
 
 Do not commit the generated `.tgz` file. It is ignored by Git and should be
@@ -406,8 +406,8 @@ npm version minor
 git push origin main --follow-tags
 ```
 
-Before the first publish, add an npm access token with package publish access
-as the repository secret `NPM_TOKEN`. The publish workflow verifies the package
+Before publishing, add an npm access token with package publish access as the
+repository secret `NPM_SECRET`. The publish workflow verifies the package
 contents and publishes with npm provenance enabled. Keep the npm token out of
 commits, logs, and command arguments.
 
