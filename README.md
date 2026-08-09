@@ -51,7 +51,7 @@ user.
 - Per-chat AGY conversation mapping when AGY returns a conversation ID.
 - Per-chat model, effort, execution mode, and sandbox settings.
 - Persistent reply keyboard beside the Telegram input.
-- Persistent keyboard limited to Plan and Mode controls.
+- Persistent keyboard limited to Model and Mode controls.
 - Inline pickers for model, effort, mode, and sandbox selection.
 - AGY CLI panels for models, agents, changelog, plugins, CLI help, version, update, and common options.
 - Full non-interactive AGY CLI passthrough through `/agy` with shell-free argument handling.
@@ -218,7 +218,7 @@ aliases. Arguments are passed directly to AGY and never through a shell.
 The process working directory remains fixed by `AGY_WORKSPACE`.
 
 The full control panel is available from `/menu`. The persistent keyboard next
-to the input intentionally contains only `Plan` and the current `Mode` button;
+to the input intentionally contains only `Model` and the current `Mode` button;
 model, effort, sandbox, session, usage, and AGY CLI information are available
 through the inline menu and slash commands.
 

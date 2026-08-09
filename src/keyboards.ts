@@ -6,7 +6,7 @@ function modeLabel(mode: SessionSettings["mode"]): string { return mode === "acc
 export function createMainKeyboard(settings: SessionSettings): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      ["📋 Plan", `⚙ Mode: ${modeLabel(settings.mode)}`],
+      ["🤖 Model", `⚙ Mode: ${modeLabel(settings.mode)}`],
     ],
     resize_keyboard: true,
     is_persistent: true,

@@ -190,13 +190,13 @@ async function cliOutput(chatId: ChatId, messageId: number, command: CliCommand)
 
 async function showMain(chatId: ChatId, messageId?: number): Promise<void> {
   const settings = settingsFor(chatId);
-  const text = `AGY Telegram\n\n${settingsText(settings)}\n\nUse the two controls beside the input for Plan and Mode. Use /menu for the full control panel.`;
+  const text = `AGY Telegram\n\n${settingsText(settings)}\n\nUse the two controls beside the input for Model and Mode. Use /menu for the full control panel.`;
   if (messageId) {
     await telegram.editMessageText(chatId, messageId, text, mainInlineKeyboard());
     await telegram.sendMessage(chatId, "Controls updated.", createMainKeyboard(settings));
   } else {
     await reply(chatId, text, mainInlineKeyboard());
-    await telegram.sendMessage(chatId, "Plan and mode controls are ready.", createMainKeyboard(settings));
+    await telegram.sendMessage(chatId, "Model and mode controls are ready.", createMainKeyboard(settings));
   }
 }
 
@@ -443,7 +443,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   if (command === "/agy") { try { await runCustomAgy(message.chat.id, parseCommandArgs(text.slice(parts[0].length))); } catch (error) { await reply(message.chat.id, `Invalid /agy command: ${(error as Error).message}`, createMainKeyboard(settingsFor(message.chat.id))); } return; }
   if (command.startsWith("/") && await handleCommand(message, command, parts.slice(1))) return;
   const buttonText = text;
-  if (buttonText === "📋 Plan") { const result = queue.enqueue({ chatId: message.chat.id, prompt: "/plan" }); await reply(message.chat.id, result.accepted ? "Plan request accepted. AGY is working..." : "Queue is full. Try again shortly.", createMainKeyboard(settingsFor(message.chat.id))); return; }
+  if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
   if (buttonText.startsWith("⚙ Mode:")) { const settings = settingsFor(message.chat.id); settings.mode = settings.mode === "plan" ? "accept-edits" : "plan"; await saveSettings(message.chat.id, settings); await reply(message.chat.id, `Mode changed to ${settings.mode}.`, createMainKeyboard(settings)); return; }
   if (text.startsWith("/")) { await reply(message.chat.id, "Unknown command. Use /menu.", createMainKeyboard(settingsFor(message.chat.id))); return; }
   const result = queue.enqueue({ chatId: message.chat.id, prompt: text });
