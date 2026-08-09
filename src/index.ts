@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { ConversationDatabase, formatRelativeTime, isUuid, type ConversationPage } from "./db.js";
+import { parseUsageQuota, parseCredits, runPtyCommand } from "./pty-runner.js";
 import { formatStepUpdate, parseCommandArgs, runAgy, runAgyCommand, validateCustomArgs } from "./agy-runner.js";
 import { loadConfig, isEffort, isMode } from "./config.js";
 import { modelLabel } from "./models.js";
 import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
-import { formatTelegramHtmlChunks, splitMessage, TelegramClient } from "./telegram.js";
-import type { AppConfig, ChatId, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
+import { formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml, TelegramClient } from "./telegram.js";
+import type { AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
 const state = new StateStore(config.stateFile);
 await state.load();
+const convDb = new ConversationDatabase(config.agy.dbPath);
 const telegram = new TelegramClient(config.telegram.token);
 const controllers = new Map<string, AbortController>();
 const pendingDangerousCommands = new Map<string, string[]>();
@@ -26,11 +29,11 @@ function authorizedCallback(callback: TelegramCallbackQuery): boolean {
   return authorizedUser(callback.from?.id, callback.message?.chat.id, callback.message?.chat.type);
 }
 
-function authorizedUser(userId: number | undefined, chatId: number | undefined, chatType: string | undefined): boolean {
-  if (userId === undefined || chatId === undefined) return false;
-  if (!config.telegram.allowedUserIds.includes(String(userId))) return false;
-  if (config.telegram.allowedChatIds.length && !config.telegram.allowedChatIds.includes(String(chatId))) return false;
-  return !config.telegram.privateOnly || chatType === "private";
+function authorizedUser(userId: number | undefined, chatId: number | string | undefined, chatType: string | undefined): boolean {
+  if (config.telegram.privateOnly && chatType !== "private") return false;
+  if (!userId || !config.telegram.allowedUserIds.includes(String(userId))) return false;
+  if (config.telegram.allowedChatIds?.length && (!chatId || !config.telegram.allowedChatIds.includes(String(chatId)))) return false;
+  return true;
 }
 
 async function reply(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): Promise<void> {
@@ -52,6 +55,18 @@ async function replyWithFormattedResponse(chatId: ChatId, text: string, replyMar
     }
   } catch {
     await reply(chatId, text, replyMarkup);
+  }
+}
+
+async function replyWithHtml(chatId: ChatId, html: string, replyMarkup?: ReplyMarkup): Promise<void> {
+  const chunks = splitPreformattedHtml(html, config.telegram.maxMessageChars);
+  for (let index = 0; index < chunks.length; index += 1) {
+    const isLast = index === chunks.length - 1;
+    try {
+      await telegram.sendMessage(chatId, chunks[index], isLast ? replyMarkup : undefined, "HTML");
+    } catch {
+      await telegram.sendMessage(chatId, chunks[index].replace(/<[^>]+>/g, ""), isLast ? replyMarkup : undefined);
+    }
   }
 }
 
@@ -110,7 +125,60 @@ function usageText(usage: Usage | null | undefined): string {
 function sessionText(chatId: ChatId): string {
   const session = state.session(chatId);
   const status = queue.statusForChat(chatId);
-  return `Session\n\nConversation: ${session?.conversationId || "new"}\nWorkspace: ${config.agy.workspace}\n${settingsText(settingsFor(chatId))}\nStatus: ${status.active ? "running" : "idle"}`;
+  const title = session?.conversationTitle || (session?.conversationId ? "Untitled session" : "new");
+  const lines = [
+    "Session\n",
+    `Active: ${title}`,
+    `Conversation: ${session?.conversationId || "new"}`,
+  ];
+  if (session?.conversationStepCount) {
+    const relative = formatRelativeTime(session.conversationLastModifiedAt || session.updatedAt);
+    lines.push(`Steps: ${session.conversationStepCount} · Last active: ${relative}`);
+  }
+  lines.push(`Workspace: ${config.agy.workspace}`);
+  lines.push(settingsText(settingsFor(chatId)));
+  lines.push(`Status: ${status.active ? "running" : "idle"}`);
+  return lines.join("\n");
+}
+
+function resumeKeyboard(page = 0, totalPages = 1, items: ConversationSummary[] = []): InlineKeyboardMarkup {
+  const rows: InlineButton[][] = items.map((item) => [
+    button(
+      item.display_title.length > 40 ? `${item.display_title.slice(0, 37)}...` : item.display_title,
+      `resume:use:${item.conversation_id}`
+    ),
+  ]);
+  const navigation: InlineButton[] = [];
+  if (page > 0) navigation.push(button("‹ Previous", `resume:page:${page - 1}`));
+  navigation.push(button(`Page ${page + 1}/${totalPages}`, "noop"));
+  if (page < totalPages - 1) navigation.push(button("Next ›", `resume:page:${page + 1}`));
+  if (navigation.length) rows.push(navigation);
+  rows.push([button("‹ Back", "menu:main")]);
+  return { inline_keyboard: rows };
+}
+
+function resumeMessageText(pageData: ConversationPage): string {
+  if (pageData.total === 0 || pageData.items.length === 0) {
+    return "<b>AGY Sessions</b>\n\nNo saved conversations found in AGY database.";
+  }
+  const list = pageData.items
+    .map((item) => {
+      const time = formatRelativeTime(item.last_modified_time);
+      return `<b>${item.display_title}</b>\n${item.step_count} steps · ${time}`;
+    })
+    .join("\n\n");
+  return `<b>AGY Sessions</b>\nPage ${pageData.page + 1}/${pageData.totalPages}\n\n${list}`;
+}
+
+async function showResumeMenu(chatId: ChatId, page = 0, messageId?: number): Promise<void> {
+  const pageData = convDb.getConversations(page, 10);
+  const text = resumeMessageText(pageData);
+  const keyboard = resumeKeyboard(pageData.page, pageData.totalPages, pageData.items);
+  if (messageId) {
+    await telegram.editMessageText(chatId, messageId, text, keyboard, "HTML");
+  } else {
+    await replyWithHtml(chatId, text, keyboard);
+  }
 }
 
 function usageReport(chatId: ChatId): string {
@@ -170,7 +238,8 @@ function mainInlineKeyboard(): InlineKeyboardMarkup {
     inline_keyboard: [
       [button("Models", "menu:models"), button("Effort", "menu:effort")],
       [button("Mode", "menu:mode"), button("Sandbox", "menu:sandbox")],
-      [button("Session", "menu:session"), button("Usage / Quota", "menu:usage")],
+      [button("Resume session", "menu:resume"), button("Session", "menu:session")],
+      [button("Usage / Quota", "action:usage"), button("Credits", "action:credits")],
       [button("AGY models", "cli:models"), button("AGY agents", "cli:agents")],
       [button("Changelog", "cli:changelog"), button("Plugins", "cli:plugins")],
       [button("CLI help", "cli:help"), button("CLI version", "cli:version")],
@@ -222,7 +291,9 @@ async function showMenu(chatId: ChatId, messageId: number, kind: string, page = 
   if (kind === "mode") return telegram.editMessageText(chatId, messageId, "Select execution mode:", modeKeyboard(chatId));
   if (kind === "sandbox") return telegram.editMessageText(chatId, messageId, `Sandbox is ${settingsFor(chatId).sandbox ? "enabled" : "disabled"}.`, sandboxKeyboard(chatId));
   if (kind === "session") return telegram.editMessageText(chatId, messageId, sessionText(chatId), backKeyboard());
-  if (kind === "usage") return telegram.editMessageText(chatId, messageId, usageReport(chatId), backKeyboard());
+  if (kind === "resume") return showResumeMenu(chatId, page, messageId);
+  if (kind === "usage") { enqueueJob(chatId, { kind: "usage" }); return; }
+  if (kind === "credits") { enqueueJob(chatId, { kind: "credits" }); return; }
   if (kind === "cli") return telegram.editMessageText(chatId, messageId, "All AGY CLI flags are available with /agy. Common session flags can be set here; options that need a path or value have a command example.", cliOptionsKeyboard(chatId));
   if (kind === "output") return telegram.editMessageText(chatId, messageId, "Select the output format used by future normal prompts:", outputFormatKeyboard(chatId));
   if (kind === "custom") return telegram.editMessageText(chatId, messageId, "Custom AGY command\n\nUse /agy followed by any non-interactive AGY arguments. Example:\n/agy --print \"Explain this project\" --output-format text\n\nInteractive TTY mode is unavailable through Telegram.", backKeyboard());
@@ -264,6 +335,53 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<void> {
   if (data.startsWith("menu:")) {
     const parts = data.split(":");
     await showMenu(chatId, messageId, parts[1], parts[2] ? Number(parts[2]) : 0);
+    return;
+  }
+  if (data.startsWith("resume:page:")) {
+    const page = Number(data.slice(12)) || 0;
+    await showResumeMenu(chatId, page, messageId);
+    return;
+  }
+  if (data.startsWith("resume:use:")) {
+    const convId = data.slice(11).trim();
+    if (!isUuid(convId)) {
+      await telegram.editMessageText(chatId, messageId, "Selected conversation ID is not a valid UUID.", backKeyboard());
+      return;
+    }
+    const summary = convDb.getConversationById(convId);
+    if (!summary) {
+      await telegram.editMessageText(chatId, messageId, "Selected conversation was not found or is invalid.", backKeyboard());
+      return;
+    }
+    const currentSession = state.session(chatId) || {};
+    const settings = settingsFor(chatId);
+    settings.continueSession = false;
+    await state.setSession(chatId, {
+      ...currentSession,
+      conversationId: summary.conversation_id,
+      conversationTitle: summary.display_title,
+      conversationStepCount: summary.step_count,
+      conversationLastModifiedAt: summary.last_modified_time,
+      settings,
+      updatedAt: new Date().toISOString(),
+    });
+    const relativeTime = formatRelativeTime(summary.last_modified_time);
+    await telegram.editMessageText(
+      chatId,
+      messageId,
+      `Session switched.\n\n<b>${summary.display_title}</b>\n${summary.step_count} steps · last used ${relativeTime}\n\nFuture prompts will continue this conversation.`,
+      { inline_keyboard: [] },
+      "HTML"
+    );
+    await telegram.sendMessage(chatId, "Controls ready.", createMainKeyboard(settings));
+    return;
+  }
+  if (data === "action:usage") {
+    enqueueJob(chatId, { kind: "usage" });
+    return;
+  }
+  if (data === "action:credits") {
+    enqueueJob(chatId, { kind: "credits" });
     return;
   }
   if (data.startsWith("cli:")) {
@@ -364,31 +482,50 @@ async function runCustomAgy(chatId: ChatId, args: string[], confirmed = false): 
   }
 }
 
+function enqueueJob(chatId: ChatId, job: Partial<QueueJob>): void {
+  const result = queue.enqueue({ chatId, kind: job.kind || "prompt", prompt: job.prompt });
+  if (!result.accepted) {
+    void reply(chatId, "Queue is full. Try again shortly.", createMainKeyboard(settingsFor(chatId)));
+  } else {
+    const label = job.kind === "usage" ? "Quota check" : job.kind === "credits" ? "Credits check" : "Prompt";
+    void reply(
+      chatId,
+      result.position && result.position > 1 ? `${label} queued (#${result.position}).` : `${label} accepted. AGY is working...`,
+      createMainKeyboard(settingsFor(chatId))
+    );
+  }
+}
+
 async function handleCommand(message: TelegramMessage, command: string, args: string[]): Promise<boolean> {
   const chatId = message.chat.id;
   if (["/start", "/menu"].includes(command)) { await showMain(chatId); return true; }
   if (command === "/help") { await showMain(chatId); await cliOutput(chatId, await telegram.sendMessage(chatId, "Loading AGY CLI help...") .then((result) => result.message_id), "help"); return true; }
-  if (command === "/new") { await state.resetSession(chatId); await reply(chatId, "New AGY conversation started.", createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/models") { await reply(chatId, "Select a model:", modelKeyboard(chatId)); return true; }
-  if (command === "/model") { if (!args[0]) await reply(chatId, `Current model: ${modelLabel(settingsFor(chatId).model)}\nUse /models to change it.`, createMainKeyboard(settingsFor(chatId))); else if (config.agy.allowedModels.includes(args[0])) { const settings = settingsFor(chatId); settings.model = args[0]; await saveSettings(chatId, settings); await reply(chatId, `Model changed to ${modelLabel(args[0])}.`, createMainKeyboard(settings)); } else await reply(chatId, "Unknown or disallowed model. Use /models.", createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/effort") { if (!args[0]) await reply(chatId, `Current effort: ${settingsFor(chatId).effort}\nUse /effort low|medium|high.`, createMainKeyboard(settingsFor(chatId))); else if (isEffort(args[0])) { const settings = settingsFor(chatId); settings.effort = args[0]; await saveSettings(chatId, settings); await reply(chatId, `Effort changed to ${args[0]}.`, createMainKeyboard(settings)); } else await reply(chatId, "Effort must be low, medium, or high.", createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/mode") { if (!args[0]) await reply(chatId, `Current mode: ${settingsFor(chatId).mode}\nUse /mode plan|accept-edits.`, createMainKeyboard(settingsFor(chatId))); else if (isMode(args[0])) { const settings = settingsFor(chatId); settings.mode = args[0]; await saveSettings(chatId, settings); await reply(chatId, `Mode changed to ${args[0]}.`, createMainKeyboard(settings)); } else await reply(chatId, "Mode must be plan or accept-edits.", createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/sandbox") { if (!args[0]) await reply(chatId, `Sandbox: ${settingsFor(chatId).sandbox ? "enabled" : "disabled"}\nUse /sandbox on|off.`, createMainKeyboard(settingsFor(chatId))); else { const settings = settingsFor(chatId); if (args[0] === "on" || (args[0] === "off" && (config.agy.allowSandboxDisable || !config.agy.sandbox))) { settings.sandbox = args[0] === "on"; await saveSettings(chatId, settings); await reply(chatId, `Sandbox ${settings.sandbox ? "enabled" : "disabled"}.`, createMainKeyboard(settings)); } else await reply(chatId, "Sandbox is enforced by the server.", createMainKeyboard(settings)); } return true; }
-  if (command === "/agent") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Current agent: ${settings.agent || "default"}\nUse /agents to list agents or /agent NAME to select one.`, createMainKeyboard(settings)); else { settings.agent = args.join(" "); await saveSettings(chatId, settings); await reply(chatId, `Agent changed to ${settings.agent}.`, createMainKeyboard(settings)); } return true; }
-  if (command === "/project") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Current project: ${settings.project || "default"}\n${sessionOptionUsage("project")}`, createMainKeyboard(settings)); else { settings.project = args[0].toLowerCase() === "clear" ? null : args.join(" "); await saveSettings(chatId, settings); await reply(chatId, `Project set to ${settings.project || "default"}.`, createMainKeyboard(settings)); } return true; }
-  if (command === "/add-dir") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Additional directories: ${settings.addDirs?.join(", ") || "none"}\n${sessionOptionUsage("add-dir")}`, createMainKeyboard(settings)); else { settings.addDirs = args[0].toLowerCase() === "clear" ? [] : [...(settings.addDirs || []), args.join(" ")]; await saveSettings(chatId, settings); await reply(chatId, `Additional directories: ${settings.addDirs.join(", ") || "none"}.`, createMainKeyboard(settings)); } return true; }
-  if (command === "/output-format") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Current output format: ${settings.outputFormat}\n${sessionOptionUsage("output-format")}`, createMainKeyboard(settings)); else if (isOutputFormat(args[0])) { settings.outputFormat = args[0]; await saveSettings(chatId, settings); await reply(chatId, `Output format set to ${settings.outputFormat}.`, createMainKeyboard(settings)); } else await reply(chatId, `Output format must be text, json, or stream-json.`, createMainKeyboard(settings)); return true; }
-  if (command === "/json-schema") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `JSON schema: ${settings.jsonSchema || "none"}\n${sessionOptionUsage("json-schema")}`, createMainKeyboard(settings)); else { settings.jsonSchema = args[0].toLowerCase() === "clear" ? null : args.join(" "); await saveSettings(chatId, settings); await reply(chatId, `JSON schema ${settings.jsonSchema ? "set" : "cleared"}.`, createMainKeyboard(settings)); } return true; }
-  if (command === "/log-file") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Log file: ${settings.logFile || "AGY default"}\n${sessionOptionUsage("log-file")}`, createMainKeyboard(settings)); else { settings.logFile = args[0].toLowerCase() === "clear" ? null : args.join(" "); await saveSettings(chatId, settings); await reply(chatId, `Log file ${settings.logFile ? `set to ${settings.logFile}` : "cleared"}.`, createMainKeyboard(settings)); } return true; }
-  if (command === "/print-timeout") { const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `Print timeout: ${settings.printTimeout || "gateway default"}\n${sessionOptionUsage("print-timeout")}`, createMainKeyboard(settings)); else { settings.printTimeout = args[0].toLowerCase() === "clear" ? null : args[0]; await saveSettings(chatId, settings); await reply(chatId, `Print timeout ${settings.printTimeout ? `set to ${settings.printTimeout}` : "cleared"}.`, createMainKeyboard(settings)); } return true; }
-  if (["/continue", "/new-project", "/disable-slash-commands"].includes(command)) { const key = command === "/continue" ? "continueSession" : command === "/new-project" ? "newProject" : "disableSlashCommands"; const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `${command}: ${settings[key] ? "on" : "off"}\n${sessionOptionUsage(command.slice(1))}`, createMainKeyboard(settings)); else if (["on", "off"].includes(args[0].toLowerCase())) { settings[key] = args[0].toLowerCase() === "on"; await saveSettings(chatId, settings); await reply(chatId, `${command} ${settings[key] ? "enabled" : "disabled"}.`, createMainKeyboard(settings)); } else await reply(chatId, `Use on or off.\n${sessionOptionUsage(command.slice(1))}`, createMainKeyboard(settings)); return true; }
+  if (command === "/resume" || command === "/sessions") { await showResumeMenu(chatId, args[0] ? Math.max(0, Number(args[0]) - 1) : 0); return true; }
+  if (command === "/continue") {
+    if (!args[0] || args[0].toLowerCase() === "list") {
+      await showResumeMenu(chatId, 0);
+      return true;
+    }
+    if (["on", "off"].includes(args[0].toLowerCase())) {
+      const settings = settingsFor(chatId);
+      settings.continueSession = args[0].toLowerCase() === "on";
+      await saveSettings(chatId, settings);
+      await reply(chatId, `/continue ${settings.continueSession ? "enabled" : "disabled"}.`, createMainKeyboard(settings));
+      return true;
+    }
+    await reply(chatId, `Use /continue to browse sessions, or /continue on|off to toggle continuation flag.`, createMainKeyboard(settingsFor(chatId)));
+    return true;
+  }
+  if (["/new-project", "/disable-slash-commands"].includes(command)) { const key = command === "/new-project" ? "newProject" : "disableSlashCommands"; const settings = settingsFor(chatId); if (!args[0]) await reply(chatId, `${command}: ${settings[key] ? "on" : "off"}\n${sessionOptionUsage(command.slice(1))}`, createMainKeyboard(settings)); else if (["on", "off"].includes(args[0].toLowerCase())) { settings[key] = args[0].toLowerCase() === "on"; await saveSettings(chatId, settings); await reply(chatId, `${command} ${settings[key] ? "enabled" : "disabled"}.`, createMainKeyboard(settings)); } else await reply(chatId, `Use on or off.\n${sessionOptionUsage(command.slice(1))}`, createMainKeyboard(settings)); return true; }
   if (command === "/agents") { await reply(chatId, "Loading AGY agents...", createMainKeyboard(settingsFor(chatId))); const output = await runAgyCommand(config.agy, ["agents"]).catch((error) => `Could not read AGY agents: ${(error as Error).message}`); await reply(chatId, `AGY agents\n\n${output || "No custom agents available."}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/changelog") { const output = await runAgyCommand(config.agy, ["changelog"]).catch((error) => `Could not read AGY changelog: ${(error as Error).message}`); await reply(chatId, `AGY changelog\n\n${output}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/plugins") { const output = await runAgyCommand(config.agy, ["plugins", "list"]).catch((error) => `Could not read AGY plugins: ${(error as Error).message}`); await reply(chatId, `AGY plugins\n\n${output || "No imported plugins."}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/cli-help") { const output = await runAgyCommand(config.agy, ["--help"]).catch((error) => `Could not read AGY help: ${(error as Error).message}`); await reply(chatId, `AGY CLI help\n\n${output}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/version") { const output = await runAgyCommand(config.agy, ["--version"]).catch((error) => `Could not read AGY version: ${(error as Error).message}`); await reply(chatId, `AGY version: ${output}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/session") { await reply(chatId, sessionText(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/usage" || command === "/quota") { await reply(chatId, usageReport(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
+  if (command === "/usage" || command === "/quota") { enqueueJob(chatId, { kind: "usage" }); return true; }
+  if (command === "/credits") { enqueueJob(chatId, { kind: "credits" }); return true; }
+  if (command === "/tokens") { await reply(chatId, usageReport(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/status") { const status = queue.statusForChat(chatId); await reply(chatId, `Status: ${status.active ? `running (${status.active.id})` : "idle"}\nQueued for this chat: ${status.queued}\nTotal queued: ${status.totalQueued}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/cancel") { pendingDangerousCommands.delete(String(chatId)); const result = queue.cancelForChat(chatId); await reply(chatId, `Cancelled: ${result.removed} queued, active=${result.activeCancelled ? "yes" : "no"}.`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/agy-confirm") { const pending = pendingDangerousCommands.get(String(chatId)); if (!pending) await reply(chatId, "There is no pending dangerous AGY command.", createMainKeyboard(settingsFor(chatId))); else await runCustomAgy(chatId, pending, true); return true; }
@@ -409,6 +546,49 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
   let lastProgressAt = 0;
   let progressUpdate = Promise.resolve();
   let responseDraft = "";
+
+  if (job.kind === "usage") {
+    try {
+      await telegram.sendChatAction(job.chatId);
+      progressMessage = await telegram.sendMessage(job.chatId, "Checking AGY models & quota via PTY...");
+      const output = await runPtyCommand(config.agy, "/usage", { timeoutMs: 15_000, signal: controller.signal });
+      if (isCancelled()) return;
+      const formatted = parseUsageQuota(output);
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "Quota check complete.").catch(() => undefined);
+      await replyWithHtml(job.chatId, formatted, createMainKeyboard(settingsFor(job.chatId)));
+    } catch (error) {
+      if (!isCancelled()) {
+        const errorMsg = (error as Error).message;
+        if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `Could not read AGY quota: ${errorMsg}`).catch(() => undefined);
+        await reply(job.chatId, `Could not read AGY quota: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
+      }
+    } finally {
+      controllers.delete(String(job.chatId));
+    }
+    return;
+  }
+
+  if (job.kind === "credits") {
+    try {
+      await telegram.sendChatAction(job.chatId);
+      progressMessage = await telegram.sendMessage(job.chatId, "Checking AGY credits via PTY...");
+      const output = await runPtyCommand(config.agy, "/credits", { timeoutMs: 15_000, signal: controller.signal });
+      if (isCancelled()) return;
+      const formatted = parseCredits(output);
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "Credits check complete.").catch(() => undefined);
+      await replyWithHtml(job.chatId, formatted, createMainKeyboard(settingsFor(job.chatId)));
+    } catch (error) {
+      if (!isCancelled()) {
+        const errorMsg = (error as Error).message;
+        if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `Could not read AGY credits: ${errorMsg}`).catch(() => undefined);
+        await reply(job.chatId, `Could not read AGY credits: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
+      }
+    } finally {
+      controllers.delete(String(job.chatId));
+    }
+    return;
+  }
+
   try {
     await telegram.sendChatAction(job.chatId);
     const session = state.session(job.chatId);
@@ -420,7 +600,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       lastProgressAt = Date.now();
       progressUpdate = progressUpdate.then(() => telegram.editMessageText(job.chatId, progressMessage!.message_id, text)).catch(() => undefined);
     };
-    const result = await runAgy(config.agy, job.prompt, session?.conversationId || null, {
+    const result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
       ...settings,
       onEvent: (event: StreamEvent) => {
         const step = event.step_update as Record<string, unknown> | undefined;
@@ -438,7 +618,16 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     if (isCancelled()) return;
     const latestSession = state.session(job.chatId);
     const lastRun = { model: result.model || settings.model, usage: result.usage, durationMs: result.durationMs, numTurns: result.numTurns, toolCalls: result.toolCalls, status: result.status || "SUCCESS", completedAt: new Date().toISOString() };
-    await state.setSession(job.chatId, { ...(result.conversationId ? { conversationId: result.conversationId } : {}), settings: latestSession?.settings || settings, lastRun, usageTotals: addUsage(latestSession?.usageTotals, result.usage), updatedAt: new Date().toISOString() });
+    await state.setSession(job.chatId, {
+      ...(result.conversationId ? { conversationId: result.conversationId } : {}),
+      conversationTitle: latestSession?.conversationTitle,
+      conversationStepCount: (latestSession?.conversationStepCount || 0) + (result.numTurns || 1),
+      conversationLastModifiedAt: Date.now(),
+      settings: latestSession?.settings || settings,
+      lastRun,
+      usageTotals: addUsage(latestSession?.usageTotals, result.usage),
+      updatedAt: new Date().toISOString(),
+    });
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage)}`);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
@@ -463,9 +652,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
   if (buttonText.startsWith("⚙ Mode:")) { const settings = settingsFor(message.chat.id); settings.mode = settings.mode === "plan" ? "accept-edits" : "plan"; await saveSettings(message.chat.id, settings); await reply(message.chat.id, `Mode changed to ${settings.mode}.`, createMainKeyboard(settings)); return; }
   if (text.startsWith("/")) { await reply(message.chat.id, "Unknown command. Use /menu.", createMainKeyboard(settingsFor(message.chat.id))); return; }
-  const result = queue.enqueue({ chatId: message.chat.id, prompt: text });
-  if (!result.accepted) await reply(message.chat.id, "Queue is full. Try again shortly.", createMainKeyboard(settingsFor(message.chat.id)));
-  else await reply(message.chat.id, result.position && result.position > 1 ? `Prompt queued (#${result.position}).` : "Prompt accepted. AGY is working...", createMainKeyboard(settingsFor(message.chat.id)));
+  enqueueJob(message.chat.id, { prompt: text, kind: "prompt" });
 }
 
 async function main(): Promise<void> {
@@ -473,8 +660,11 @@ async function main(): Promise<void> {
   await telegram.setMyCommands([
     { command: "menu", description: "Show the bottom control keyboard" },
     { command: "new", description: "Start a new AGY conversation" },
-    { command: "usage", description: "Show usage and quota" },
-    { command: "quota", description: "Show usage and quota" },
+    { command: "resume", description: "Resume previous conversation from database" },
+    { command: "usage", description: "Check live models & quota via PTY" },
+    { command: "credits", description: "Check live AGY credits via PTY" },
+    { command: "tokens", description: "Show token usage and turns" },
+    { command: "quota", description: "Alias for /usage" },
     { command: "status", description: "Show current job status" },
     { command: "cancel", description: "Cancel the active or queued job" },
     { command: "models", description: "Choose the Telegram model" },

@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatTelegramHtml, formatTelegramHtmlChunks, splitMessage } from "../src/telegram.js";
+import { formatTelegramHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml } from "../src/telegram.js";
 import { createMainKeyboard } from "../src/keyboards.js";
+
+test("splitPreformattedHtml preserves HTML tags without double escaping", () => {
+  const html = "📊 <b>Models & Quota</b>\n\n<b>Account:</b> <code>user@example.com</code>\n\n• Weekly Limit: <b>94%</b>";
+  const chunks = splitPreformattedHtml(html, 1000);
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0], html);
+  // Ensure tags are NOT escaped as &lt;b&gt;
+  assert.ok(chunks[0].includes("<b>Models & Quota</b>"));
+  assert.ok(!chunks[0].includes("&lt;b&gt;"));
+});
 
 test("splits Telegram messages near line boundaries", () => { const chunks = splitMessage("one\ntwo\nthree\nfour", 8); assert.deepEqual(chunks, ["one\ntwo", "three", "four"]); assert.ok(chunks.every((chunk) => chunk.length <= 8)); });
 

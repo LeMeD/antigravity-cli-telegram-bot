@@ -21,7 +21,14 @@ test("builds the complete non-interactive option set", () => {
     agent: "reviewer", addDirs: ["/one", "/two"], continueSession: true, newProject: true,
     disableSlashCommands: true, jsonSchema: '{"type":"object"}', logFile: "/tmp/agy.log",
     printTimeout: "10m", dangerouslySkipPermissions: true,
-  }), ["--print", "hello", "--output-format", "stream-json", "--print-timeout", "10m", "--project", "project", "--mode", "plan", "--model", "model", "--effort", "high", "--agent", "reviewer", "--add-dir", "/one", "--add-dir", "/two", "--continue", "--new-project", "--disable-slash-commands", "--json-schema", '{"type":"object"}', "--log-file", "/tmp/agy.log", "--dangerously-skip-permissions", "--sandbox"]);
+  }), ["--print", "hello", "--output-format", "stream-json", "--print-timeout", "10m", "--project", "project", "--mode", "plan", "--model", "model", "--effort", "high", "--agent", "reviewer", "--add-dir", "/one", "--add-dir", "/two", "--new-project", "--disable-slash-commands", "--json-schema", '{"type":"object"}', "--log-file", "/tmp/agy.log", "--dangerously-skip-permissions", "--sandbox", "--continue"]);
+});
+
+test("prioritizes --conversation over --continue when conversationId is provided", () => {
+  const args = buildArgs(config, "hello", "uuid-1234", { continueSession: true });
+  assert.ok(args.includes("--conversation"));
+  assert.equal(args[args.indexOf("--conversation") + 1], "uuid-1234");
+  assert.ok(!args.includes("--continue"));
 });
 
 test("parses quoted custom command arguments without a shell", () => {

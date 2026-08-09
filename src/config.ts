@@ -1,6 +1,15 @@
+import os from "node:os";
 import path from "node:path";
 import { DEFAULT_MODELS } from "./models.js";
 import type { AppConfig } from "./types.js";
+
+function resolvePath(inputPath: string): string {
+  const trimmed = inputPath.trim();
+  if (trimmed === "~" || trimmed.startsWith("~/")) {
+    return path.join(os.homedir() || process.env.HOME || "/var/lib/agybot", trimmed.slice(trimmed === "~" ? 1 : 2));
+  }
+  return trimmed;
+}
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const token = env.TELEGRAM_BOT_TOKEN?.trim();
@@ -16,6 +25,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const allowedModels = modelsFrom(env);
   const model = (env.AGY_MODEL || "").trim();
   if (model && !allowedModels.includes(model)) throw new Error(`AGY_MODEL is not in AGY_ALLOWED_MODELS: ${model}`);
+  const defaultDbPath = path.join(os.homedir() || process.env.HOME || "/var/lib/agybot", ".gemini/antigravity-cli/conversation_summaries.db");
+  const dbPath = resolvePath(env.AGY_DB_PATH || defaultDbPath);
   return {
     telegram: {
       token, allowedUserIds, allowedChatIds: numericCsvFrom(env, "TELEGRAM_ALLOWED_CHAT_IDS"),
@@ -29,6 +40,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       maxOutputBytes: positiveIntegerFrom(env, "AGY_MAX_OUTPUT_BYTES", 20_000_000),
       agent: (env.AGY_AGENT || "").trim() || undefined,
       allowDangerouslySkipPermissions: booleanFrom(env, "AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS", false),
+      dbPath,
     },
     queue: { maxSize: positiveIntegerFrom(env, "MAX_QUEUE_SIZE", 8) },
     stateFile: (env.STATE_FILE || "/var/lib/agy-telegram/state.json").trim(),

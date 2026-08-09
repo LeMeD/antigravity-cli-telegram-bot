@@ -13,14 +13,17 @@ export function buildArgs(config: AgyConfig, prompt: string, conversationId: str
   if (effective.effort) args.push("--effort", effective.effort);
   if (effective.agent) args.push("--agent", effective.agent);
   for (const addDir of effective.addDirs || []) args.push("--add-dir", addDir);
-  if (effective.continueSession) args.push("--continue");
   if (effective.newProject) args.push("--new-project");
   if (effective.disableSlashCommands) args.push("--disable-slash-commands");
   if (effective.jsonSchema) args.push("--json-schema", effective.jsonSchema);
   if (effective.logFile) args.push("--log-file", effective.logFile);
   if (effective.dangerouslySkipPermissions || config.allowDangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
   if (effective.sandbox) args.push("--sandbox");
-  if (conversationId && !effective.continueSession) args.push("--conversation", conversationId);
+  if (conversationId) {
+    args.push("--conversation", conversationId);
+  } else if (effective.continueSession) {
+    args.push("--continue");
+  }
   return args;
 }
 

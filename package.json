@@ -41,7 +41,7 @@
     "prepack": "npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "MIT",
   "devDependencies": {

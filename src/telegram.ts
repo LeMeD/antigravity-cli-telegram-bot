@@ -16,9 +16,21 @@ export class TelegramClient {
   public sendMessage(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup, parseMode?: TelegramParseMode): Promise<{ message_id: number }> {
     return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
   }
-  public async editMessageText(chatId: ChatId, messageId: number, text: string, replyMarkup?: InlineKeyboardMarkup): Promise<void> {
+  public async editMessageText(
+    chatId: ChatId,
+    messageId: number,
+    text: string,
+    replyMarkup?: InlineKeyboardMarkup,
+    parseMode?: TelegramParseMode
+  ): Promise<void> {
     try {
-      await this.call("editMessageText", { chat_id: chatId, message_id: messageId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+      await this.call("editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        ...(parseMode ? { parse_mode: parseMode } : {}),
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
     } catch (error) {
       if (error instanceof Error && error.message.includes("message is not modified")) return;
       throw error;
@@ -41,6 +53,37 @@ export function splitMessage(text: string, maxChars: number): string[] {
   const chunks: string[] = []; let rest = text;
   while (rest.length > maxChars) { let cut = rest.lastIndexOf("\n", maxChars); if (cut < Math.floor(maxChars * 0.5)) cut = maxChars; chunks.push(rest.slice(0, cut)); rest = rest.slice(cut).replace(/^\n+/, ""); }
   if (rest) chunks.push(rest); return chunks;
+}
+
+/** Splits pre-formatted HTML text without re-escaping HTML tags. */
+export function splitPreformattedHtml(htmlText: string, maxChars: number): string[] {
+  if (maxChars < 1) return [];
+  const normalized = htmlText.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+  if (normalized.length <= maxChars) return [normalized];
+
+  const blocks = normalized.split("\n\n");
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    const candidate = current ? `${current}\n\n${block}` : block;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+    } else {
+      if (current) chunks.push(current);
+      if (block.length <= maxChars) {
+        current = block;
+      } else {
+        const lineParts = splitMessage(block, maxChars);
+        chunks.push(...lineParts);
+        current = "";
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 /** Converts the Markdown-like output AGY commonly produces to safe Telegram HTML. */

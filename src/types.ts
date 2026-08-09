@@ -54,10 +54,21 @@ export interface RunStats {
 
 export interface SessionState {
   conversationId?: string;
+  conversationTitle?: string;
+  conversationStepCount?: number;
+  conversationLastModifiedAt?: number | string;
   settings?: Partial<SessionSettings>;
   lastRun?: RunStats;
   usageTotals?: Usage | null;
   updatedAt?: string;
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  display_title: string;
+  step_count: number;
+  last_modified_time: number | string;
+  project_id?: string;
 }
 
 export interface PersistedState { updateOffset: number; sessions: Record<string, SessionState> }
@@ -76,6 +87,7 @@ export interface AgyConfig {
   maxOutputBytes: number;
   agent?: string;
   allowDangerouslySkipPermissions: boolean;
+  dbPath: string;
 }
 
 export interface AppConfig {

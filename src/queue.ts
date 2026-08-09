@@ -1,6 +1,12 @@
 import type { ChatId } from "./types.js";
 
-export interface QueueJob { chatId: ChatId; prompt: string; id?: string; enqueuedAt?: number }
+export interface QueueJob {
+  chatId: ChatId;
+  prompt?: string;
+  kind?: "prompt" | "usage" | "credits";
+  id?: string;
+  enqueuedAt?: number;
+}
 export interface QueueStatus { active: (QueueJob & { cancel: () => boolean }) | null; queued: number; totalQueued: number }
 type Worker = (job: QueueJob, isCancelled: () => boolean) => Promise<void>;
 

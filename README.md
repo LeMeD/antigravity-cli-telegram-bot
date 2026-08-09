@@ -7,11 +7,11 @@
 Run AGY prompts from Telegram with allowlisted users, per-chat sessions,
 streamed progress, model controls, and a hardened systemd deployment.
 
-[![Node.js 20+](https://img.shields.io/badge/node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js 22+](https://img.shields.io/badge/node.js-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-44%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -53,6 +53,10 @@ user.
 - Persistent reply keyboard beside the Telegram input.
 - Persistent keyboard limited to Model and Mode controls.
 - Inline pickers for model, effort, mode, and sandbox selection.
+- Browse, paginate, and resume saved AGY conversations from the AGY SQLite database.
+- Live AGY model quota reports through a PTY-backed `/usage` command.
+- Live AGY credits reports through a PTY-backed `/credits` command.
+- Separate `/tokens` reporting for per-turn and accumulated stream usage.
 - AGY CLI panels for models, agents, changelog, plugins, CLI help, version, update, and common options.
 - Full non-interactive AGY CLI passthrough through `/agy` with shell-free argument handling.
 - Streamed progress messages and live response drafts.
@@ -73,23 +77,30 @@ Long-polling gateway
    |
    v
 Per-chat authorization and queue
+   |                       |
+   v                       v
+One non-interactive AGY   One-shot PTY AGY command
+process                   (/usage, /credits)
+   |                       |
+   v                       v
+AGY stream-json events    Cleaned terminal report
+-> Telegram responses     -> Telegram HTML response
    |
    v
-One non-interactive AGY process
-   |
-   v
-AGY stream-json events -> Telegram progress and response messages
+Read-only AGY SQLite conversation index -> /resume
 ```
 
 The gateway starts AGY with `--print --output-format stream-json`, parses its
 incremental NDJSON events, and edits Telegram messages as work progresses.
-AGY interactive mode is intentionally not used: its full-screen PTY output
-contains ANSI terminal control sequences and has no stable Telegram
-request/response boundary.
+Normal prompts intentionally use this non-interactive mode for stable response
+boundaries. The read-only `/usage` and `/credits` commands are the exception:
+they launch a short-lived PTY session, type the slash command, clean ANSI/TUI
+output, and return only the resulting report. PTY processes are time-limited
+and can be cancelled with `/cancel`.
 
 ## Requirements
 
-- Node.js 20 or newer.
+- Node.js 22 or newer (uses native SQLite).
 - The AGY CLI installed and authenticated for the service user.
 - A Telegram bot created through [BotFather].
 - A writable, dedicated AGY workspace.
@@ -177,6 +188,8 @@ system prefix.
 | `/help` | Show available commands. |
 | `/menu` | Show or refresh the persistent control keyboard. |
 | `/new` | Start a new AGY conversation for this chat. |
+| `/resume` | Browse and resume previous conversations from AGY's SQLite database. |
+| `/sessions` | Alias for `/resume`. |
 | `/models` | Open the allowed model picker. |
 | `/model` | Show the current model. |
 | `/model ID` | Select an allowed model. |
@@ -186,9 +199,11 @@ system prefix.
 | `/mode MODE` | Set `plan` or `accept-edits` mode. |
 | `/sandbox` | Show the current sandbox status. |
 | `/sandbox on\|off` | Enable or disable sandbox when server policy permits it. |
-| `/session` | Show conversation and runtime settings. |
-| `/usage` | Show the latest and accumulated usage. |
+| `/session` | Show active conversation and runtime settings. |
+| `/usage` | Check live models & quota limits from AGY interactive PTY. |
 | `/quota` | Alias for `/usage`. |
+| `/credits` | Check live AGY credits and purchase links via PTY. |
+| `/tokens` | Show turn and accumulated token usage from stream data. |
 | `/status` | Show queue and active-job status. |
 | `/cancel` | Cancel this chat's active or queued jobs. |
 | `/agents` | List available custom AGY agents. |
@@ -219,7 +234,7 @@ The process working directory remains fixed by `AGY_WORKSPACE`.
 
 The full control panel is available from `/menu`. The persistent keyboard next
 to the input intentionally contains only `Model` and the current `Mode` button;
-model, effort, sandbox, session, usage, and AGY CLI information are available
+model, effort, sandbox, session, usage, credits, resume, and AGY CLI information are available
 through the inline menu and slash commands.
 
 The inline menu exposes common flags and plugin actions; the custom command
@@ -230,6 +245,34 @@ update, and `agy install` require a second `/agy-confirm` message. With
 commands automatically approve tool permissions so ordinary shell commands
 can run without an interactive approval prompt. The configured sandbox policy,
 service user, workspace, and systemd restrictions remain in force.
+
+### Interactive command behavior
+
+`/usage` and `/credits` are read-only commands implemented with a one-shot PTY
+runner because AGY exposes these reports through its interactive TUI. The
+runner:
+
+- Starts AGY with the configured binary and workspace as the service user.
+- Removes Telegram bot credentials from the child environment.
+- Handles terminal capability queries and the workspace trust prompt.
+- Waits for the rendered prompt, types the slash command, and submits it.
+- Detects reports rendered between TUI rows, including multiline prompt output.
+- Removes ANSI control sequences and formats quota/credits as Telegram HTML.
+- Terminates the child process after the report, timeout, cancellation, or output limit.
+
+Normal text prompts do not use this PTY path. They continue to use
+`--print --output-format stream-json` so streamed progress, response parsing,
+conversation IDs, and token usage remain deterministic.
+
+### Resuming conversations
+
+`/resume` reads `conversation_summaries` from the configured AGY SQLite database
+in read-only mode. The bot filters out killed or empty conversations, displays
+ten sessions per page, validates selected conversation UUIDs, and stores the
+selected conversation in per-chat state. Future normal prompts pass the
+selected conversation with `--conversation`; this takes precedence over
+`--continue`. `/new` clears the active conversation and its accumulated run
+usage while preserving the chat's model and execution settings.
 
 ## Configuration
 
@@ -246,6 +289,7 @@ following variables are supported:
 | `AGY_BIN` | `/root/.local/bin/agy` | Absolute path to the AGY executable. |
 | `AGY_WORKSPACE` | `/srv/agy-workspaces/default` | Only working directory AGY may use. Must be absolute. |
 | `AGY_PROJECT` | Empty | Optional AGY project identifier. |
+| `AGY_DB_PATH` | `~/.gemini/antigravity-cli/conversation_summaries.db` | Read-only AGY SQLite database used by `/resume`. |
 | `AGY_MODE` | `plan` | AGY mode: `plan` or `accept-edits`. |
 | `AGY_SANDBOX` | `1` | Enable AGY terminal restrictions by default. |
 | `AGY_ALLOW_SANDBOX_DISABLE` | `0` | Permit users to turn off the sandbox. Keep disabled unless deliberate. |
@@ -423,10 +467,12 @@ Before opening a pull request:
 ```text
 src/
   agy-runner.ts   AGY process execution and stream-json parsing
+  db.ts           Read-only SQLite conversation listing and lookup
   config.ts       Environment parsing and safety validation
   index.ts        Telegram polling, commands, callbacks, and job lifecycle
   keyboards.ts    Persistent Telegram reply keyboard
   models.ts       Built-in model catalog
+  pty-runner.ts   PTY execution and quota/credits report parsing
   queue.ts        Global job queue and cancellation
   state.ts        Persistent sessions, offsets, settings, and usage
   telegram.ts     Typed Telegram Bot API client
@@ -443,8 +489,11 @@ deploy/           systemd unit and deployment environment template
 - Telegram output is chunked or uploaded as Markdown for long responses.
 - Subscription quota is not available from AGY `stream-json` and cannot be
   calculated by this gateway.
-- AGY interactive PTY mode is not supported because terminal escape sequences
-  do not provide a reliable Telegram message boundary.
+- The AGY interactive PTY path is intentionally limited to the read-only
+  `/usage` and `/credits` reports; arbitrary interactive commands are not
+  exposed through Telegram.
+- The PTY parser depends on the installed AGY TUI headings and may need updates
+  if a future AGY release changes the report layout.
 
 ## Contributing
 
