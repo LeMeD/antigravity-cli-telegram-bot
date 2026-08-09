@@ -11,7 +11,7 @@ streamed progress, model controls, and a hardened systemd deployment.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-44%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-47%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -47,8 +47,9 @@ service under a dedicated Unix user.
 - Standalone Telegram bot and token for Antigravity CLI.
 - Numeric Telegram user allowlist with optional chat allowlist.
 - Private-chat-only operation by default.
-- One global AGY job at a time to protect a small VPS.
+- One global AGY job at a time to protect a small VPS with `isDraining` queue lock guard.
 - Per-chat AGY conversation mapping when AGY returns a conversation ID.
+- Multimodal photo and document file attachment support (`.pdf`, `.txt`, `.md`, `.json`, `.csv`, `.py`, `.go`, etc.) automatically saved to `${AGY_WORKSPACE}/uploads/`.
 - Per-chat model, effort, execution mode, and sandbox settings.
 - Persistent reply keyboard beside the Telegram input.
 - Persistent keyboard limited to Model and Mode controls.
@@ -56,6 +57,8 @@ service under a dedicated Unix user.
 - Browse, paginate, and resume saved AGY conversations from the AGY SQLite database.
 - Live AGY model quota reports through a PTY-backed `/usage` command.
 - Live AGY credits reports through a PTY-backed `/credits` command.
+- Live AGY active context token breakdown through a PTY-backed `/context` command.
+- Active Context Usage % and visual progress bar representation based on per-model context limits (Gemini 1M/2M, Claude 200K, GPT 128K).
 - Separate `/tokens` reporting for per-turn and accumulated stream usage.
 - AGY CLI panels for models, agents, changelog, plugins, CLI help, version, update, and common options.
 - Full non-interactive AGY CLI passthrough through `/agy` with shell-free argument handling.
@@ -63,7 +66,7 @@ service under a dedicated Unix user.
 - Per-turn and accumulated token usage when AGY provides usage data.
 - Long replies uploaded as Markdown documents.
 - Process-group timeout and cancellation.
-- Strict TypeScript build with a small automated test suite.
+- Strict TypeScript build with an automated test suite (47 passing tests).
 - Dangerous plugin, update, install, and permission operations require an explicit second confirmation.
 - AGY is restricted to the configured workspace.
 
