@@ -17,9 +17,8 @@ streamed progress, model controls, and a hardened systemd deployment.
 </div>
 
 Antigravity CLI Telegram Bot is a standalone tool for connecting the
-Antigravity CLI to a Telegram bot. It is separate from the OpenCode Telegram
-bot and is designed to run as its own systemd service under a dedicated Unix
-user.
+Antigravity CLI to a Telegram bot. It is designed to run as its own systemd
+service under a dedicated Unix user.
 
 > **Security notice:** AGY can inspect and modify files and execute commands
 > through its tools. Only deploy this bot for trusted Telegram users and keep
@@ -45,7 +44,7 @@ user.
 
 ## Features
 
-- Standalone Telegram bot and token, separate from OpenCode.
+- Standalone Telegram bot and token for Antigravity CLI.
 - Numeric Telegram user allowlist with optional chat allowlist.
 - Private-chat-only operation by default.
 - One global AGY job at a time to protect a small VPS.
