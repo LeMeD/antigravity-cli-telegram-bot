@@ -3,9 +3,12 @@ import type { ChatId } from "./types.js";
 export interface QueueJob {
   chatId: ChatId;
   prompt?: string;
-  kind?: "prompt" | "usage" | "credits";
+  kind?: "prompt" | "usage" | "credits" | "context";
   id?: string;
   enqueuedAt?: number;
+  imagePath?: string;
+  documentPath?: string;
+  documentName?: string;
 }
 export interface QueueStatus { active: (QueueJob & { cancel: () => boolean }) | null; queued: number; totalQueued: number }
 type Worker = (job: QueueJob, isCancelled: () => boolean) => Promise<void>;
@@ -14,6 +17,7 @@ export class JobQueue {
   private readonly pending: QueueJob[] = [];
   private active: (QueueJob & { cancel: () => boolean }) | null = null;
   private sequence = 0;
+  private isDraining = false;
   public constructor(private readonly maxSize: number, private readonly worker: Worker) {}
   public enqueue(job: QueueJob): { accepted: boolean; reason?: string; jobId?: string; position?: number } {
     if (this.pending.length >= this.maxSize) return { accepted: false, reason: "queue_full" };
@@ -31,9 +35,16 @@ export class JobQueue {
     return { active: this.active && String(this.active.chatId) === String(chatId) ? this.active : null, queued: this.pending.filter((job) => String(job.chatId) === String(chatId)).length, totalQueued: this.pending.length };
   }
   private async drain(): Promise<void> {
-    if (this.active || this.pending.length === 0) return;
-    const job = this.pending.shift()!; let cancelled = false;
-    this.active = { ...job, cancel: () => { cancelled = true; return true; } };
-    try { await this.worker(job, () => cancelled); } finally { this.active = null; void this.drain(); }
+    if (this.active || this.isDraining || this.pending.length === 0) return;
+    this.isDraining = true;
+    try {
+      while (this.pending.length > 0) {
+        const job = this.pending.shift()!; let cancelled = false;
+        this.active = { ...job, cancel: () => { cancelled = true; return true; } };
+        try { await this.worker(job, () => cancelled); } finally { this.active = null; }
+      }
+    } finally {
+      this.isDraining = false;
+    }
   }
 }
