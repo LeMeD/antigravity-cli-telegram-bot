@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import fs from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 import { ConversationDatabase, formatRelativeTime, isUuid, type ConversationPage } from "./db.js";
-import { parseUsageQuota, parseCredits, runPtyCommand } from "./pty-runner.js";
+import { parseUsageQuota, parseCredits, parseContext, runPtyCommand } from "./pty-runner.js";
 import { formatStepUpdate, parseCommandArgs, runAgy, runAgyCommand, validateCustomArgs } from "./agy-runner.js";
 import { loadConfig, isEffort, isMode } from "./config.js";
-import { modelLabel } from "./models.js";
+import { getModelMaxContext, modelLabel, renderContextProgressBar } from "./models.js";
 import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
@@ -116,10 +118,25 @@ async function saveSettings(chatId: ChatId, settings: SessionSettings): Promise<
   await state.setSession(chatId, { settings, updatedAt: new Date().toISOString() });
 }
 
-function usageText(usage: Usage | null | undefined): string {
+function usageText(usage: Usage | null | undefined, modelId: string | null = null, isAccumulated = false): string {
   if (!usage) return "Usage data was not provided by AGY.";
-  const labels: Array<[keyof Usage, string]> = [["input_tokens", "Input"], ["output_tokens", "Output"], ["thinking_tokens", "Thinking"], ["cache_read_tokens", "Cache-read"], ["total_tokens", "Total"]];
-  return labels.filter(([key]) => usage[key] !== undefined).map(([key, label]) => `${label}: ${usage[key]!.toLocaleString()}`).join("\n") || "Usage data was not provided by AGY.";
+  const activeInputContext = (usage.input_tokens || 0) + (usage.cache_read_tokens || 0);
+  const maxContext = getModelMaxContext(modelId);
+  const lines: string[] = [];
+  if (!isAccumulated && activeInputContext > 0) {
+    if (activeInputContext <= maxContext) {
+      lines.push(`Active Context: ${renderContextProgressBar(activeInputContext, maxContext)}`);
+    } else {
+      lines.push(`Context reported by AGY: ${activeInputContext.toLocaleString()} tokens (Session Total; active context unavailable)`);
+    }
+  }
+  const labels: Array<[keyof Usage, string]> = [["input_tokens", "Input (New)"], ["output_tokens", "Output"], ["thinking_tokens", "Thinking"], ["cache_read_tokens", "Cache-read"], ["total_tokens", "Total Billed"]];
+  for (const [key, label] of labels) {
+    if (usage[key] !== undefined) {
+      lines.push(`${label}: ${usage[key]!.toLocaleString()}`);
+    }
+  }
+  return lines.join("\n") || "Usage data was not provided by AGY.";
 }
 
 function sessionText(chatId: ChatId): string {
@@ -184,8 +201,9 @@ async function showResumeMenu(chatId: ChatId, page = 0, messageId?: number): Pro
 function usageReport(chatId: ChatId): string {
   const session = state.session(chatId);
   const last = session?.lastRun;
-  const lastText = last ? [`Last run: ${last.status}`, last.model ? `Model: ${modelLabel(last.model)}` : null, last.durationMs ? `Duration: ${(last.durationMs / 1000).toFixed(1)}s` : null, last.numTurns !== null ? `Turns: ${last.numTurns}` : null, last.toolCalls ? `Tool calls: ${last.toolCalls}` : null, usageText(last.usage)].filter(Boolean).join("\n") : "Last run: no completed run yet.";
-  return `Usage / Quota\n\n${lastText}\n\nAccumulated usage:\n${usageText(session?.usageTotals)}\n\nSubscription quota is not exposed by AGY stream-json.`;
+  const modelId = last?.model || settingsFor(chatId).model;
+  const lastText = last ? [`Last run: ${last.status}`, last.model ? `Model: ${modelLabel(last.model)}` : null, last.durationMs ? `Duration: ${(last.durationMs / 1000).toFixed(1)}s` : null, last.numTurns !== null ? `Turns: ${last.numTurns}` : null, last.toolCalls ? `Tool calls: ${last.toolCalls}` : null, usageText(last.usage, modelId)].filter(Boolean).join("\n") : "Last run: no completed run yet.";
+  return `Usage / Quota\n\n${lastText}\n\nAccumulated usage:\n${usageText(session?.usageTotals, modelId, true)}\n\nSubscription quota is not exposed by AGY stream-json.`;
 }
 
 function isOutputFormat(value: string): value is NonNullable<SessionSettings["outputFormat"]> {
@@ -239,7 +257,7 @@ function mainInlineKeyboard(): InlineKeyboardMarkup {
       [button("Models", "menu:models"), button("Effort", "menu:effort")],
       [button("Mode", "menu:mode"), button("Sandbox", "menu:sandbox")],
       [button("Resume session", "menu:resume"), button("Session", "menu:session")],
-      [button("Usage / Quota", "action:usage"), button("Credits", "action:credits")],
+      [button("Usage / Quota", "action:usage"), button("Active Context", "action:context")],
       [button("AGY models", "cli:models"), button("AGY agents", "cli:agents")],
       [button("Changelog", "cli:changelog"), button("Plugins", "cli:plugins")],
       [button("CLI help", "cli:help"), button("CLI version", "cli:version")],
@@ -384,6 +402,10 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<void> {
     enqueueJob(chatId, { kind: "credits" });
     return;
   }
+  if (data === "action:context") {
+    enqueueJob(chatId, { kind: "context" });
+    return;
+  }
   if (data.startsWith("cli:")) {
     const command = data.slice(4);
     if (["models", "agents", "changelog", "plugins", "help", "version"].includes(command)) await cliOutput(chatId, messageId, command as CliCommand);
@@ -483,11 +505,11 @@ async function runCustomAgy(chatId: ChatId, args: string[], confirmed = false): 
 }
 
 function enqueueJob(chatId: ChatId, job: Partial<QueueJob>): void {
-  const result = queue.enqueue({ chatId, kind: job.kind || "prompt", prompt: job.prompt });
+  const result = queue.enqueue({ chatId, kind: job.kind || "prompt", prompt: job.prompt, imagePath: job.imagePath, documentPath: job.documentPath, documentName: job.documentName });
   if (!result.accepted) {
     void reply(chatId, "Queue is full. Try again shortly.", createMainKeyboard(settingsFor(chatId)));
   } else {
-    const label = job.kind === "usage" ? "Quota check" : job.kind === "credits" ? "Credits check" : "Prompt";
+    const label = job.kind === "usage" ? "Quota check" : job.kind === "credits" ? "Credits check" : job.kind === "context" ? "Active Context check" : job.imagePath ? "Image prompt" : job.documentName ? `Document (${job.documentName})` : "Prompt";
     void reply(
       chatId,
       result.position && result.position > 1 ? `${label} queued (#${result.position}).` : `${label} accepted. AGY is working...`,
@@ -525,6 +547,7 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
   if (command === "/session") { await reply(chatId, sessionText(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/usage" || command === "/quota") { enqueueJob(chatId, { kind: "usage" }); return true; }
   if (command === "/credits") { enqueueJob(chatId, { kind: "credits" }); return true; }
+  if (command === "/context") { enqueueJob(chatId, { kind: "context" }); return true; }
   if (command === "/tokens") { await reply(chatId, usageReport(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/status") { const status = queue.statusForChat(chatId); await reply(chatId, `Status: ${status.active ? `running (${status.active.id})` : "idle"}\nQueued for this chat: ${status.queued}\nTotal queued: ${status.totalQueued}`, createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/cancel") { pendingDangerousCommands.delete(String(chatId)); const result = queue.cancelForChat(chatId); await reply(chatId, `Cancelled: ${result.removed} queued, active=${result.activeCancelled ? "yes" : "no"}.`, createMainKeyboard(settingsFor(chatId))); return true; }
@@ -589,6 +612,32 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     return;
   }
 
+  if (job.kind === "context") {
+    try {
+      const session = state.session(job.chatId);
+      if (!session?.conversationId) {
+        await reply(job.chatId, "No active AGY conversation. Resume or start a conversation first.", createMainKeyboard(settingsFor(job.chatId)));
+        return;
+      }
+      await telegram.sendChatAction(job.chatId);
+      progressMessage = await telegram.sendMessage(job.chatId, "Reading Active Context from the current AGY conversation via PTY...");
+      const output = await runPtyCommand(config.agy, "/context", { conversationId: session.conversationId, timeoutMs: 15_000, signal: controller.signal });
+      if (isCancelled()) return;
+      const formatted = parseContext(output);
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "Active Context check complete.").catch(() => undefined);
+      await replyWithHtml(job.chatId, formatted, createMainKeyboard(settingsFor(job.chatId)));
+    } catch (error) {
+      if (!isCancelled()) {
+        const errorMsg = (error as Error).message;
+        if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `Could not read Active Context: ${errorMsg}`).catch(() => undefined);
+        await reply(job.chatId, `Could not read Active Context: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
+      }
+    } finally {
+      controllers.delete(String(job.chatId));
+    }
+    return;
+  }
+
   try {
     await telegram.sendChatAction(job.chatId);
     const session = state.session(job.chatId);
@@ -602,6 +651,9 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     };
     const result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
       ...settings,
+      imagePath: job.imagePath,
+      documentPath: job.documentPath,
+      documentName: job.documentName,
       onEvent: (event: StreamEvent) => {
         const step = event.step_update as Record<string, unknown> | undefined;
         const textDelta = typeof step?.text_delta === "string" ? step.text_delta : "";
@@ -629,12 +681,17 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       updatedAt: new Date().toISOString(),
     });
     await progressUpdate;
-    if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage)}`);
+    if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
     if (!isCancelled()) { if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined); await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId))); }
-  } finally { controllers.delete(String(job.chatId)); }
+  } finally {
+    controllers.delete(String(job.chatId));
+    if (job.imagePath) {
+      await fs.unlink(job.imagePath).catch(() => undefined);
+    }
+  }
 }
 
 const queue = new JobQueue(config.queue.maxSize, processJob);
@@ -642,17 +699,69 @@ const originalCancel = queue.cancelForChat.bind(queue);
 queue.cancelForChat = (chatId: ChatId) => { const result = originalCancel(chatId); controllers.get(String(chatId))?.abort(); return result; };
 
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
-  if (update.callback_query) { await handleCallback(update.callback_query); return; }
-  const message = update.message;
-  if (!authorizedMessage(message) || !message?.text) return;
-  const text = message.text.trim(); const parts = text.split(/\s+/); const command = parts[0].toLowerCase().split("@")[0].replace(/_/g, "-");
-  if (command === "/agy") { try { await runCustomAgy(message.chat.id, parseCommandArgs(text.slice(parts[0].length))); } catch (error) { await reply(message.chat.id, `Invalid /agy command: ${(error as Error).message}`, createMainKeyboard(settingsFor(message.chat.id))); } return; }
-  if (command.startsWith("/") && await handleCommand(message, command, parts.slice(1))) return;
-  const buttonText = text;
-  if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
-  if (buttonText.startsWith("⚙ Mode:")) { const settings = settingsFor(message.chat.id); settings.mode = settings.mode === "plan" ? "accept-edits" : "plan"; await saveSettings(message.chat.id, settings); await reply(message.chat.id, `Mode changed to ${settings.mode}.`, createMainKeyboard(settings)); return; }
-  if (text.startsWith("/")) { await reply(message.chat.id, "Unknown command. Use /menu.", createMainKeyboard(settingsFor(message.chat.id))); return; }
-  enqueueJob(message.chat.id, { prompt: text, kind: "prompt" });
+  try {
+    if (update.callback_query) { await handleCallback(update.callback_query); return; }
+    const message = update.message;
+    if (!message || !authorizedMessage(message)) return;
+
+    let imagePath: string | undefined;
+    let documentPath: string | undefined;
+    let documentName: string | undefined;
+    let fileId: string | undefined;
+    let fileExt = ".jpg";
+    let isDoc = false;
+
+    if (message.photo && message.photo.length > 0) {
+      fileId = message.photo[message.photo.length - 1].file_id;
+    } else if (message.document) {
+      fileId = message.document.file_id;
+      isDoc = true;
+      if (message.document.mime_type?.startsWith("image/")) {
+        isDoc = false;
+        if (message.document.file_name && path.extname(message.document.file_name)) {
+          fileExt = path.extname(message.document.file_name);
+        }
+      }
+    }
+
+    if (fileId) {
+      try {
+        await telegram.sendChatAction(message.chat.id, "typing");
+        const fileInfo = await telegram.getFile(fileId);
+        if (fileInfo.file_path) {
+          if (isDoc && message.document) {
+            const rawName = message.document.file_name || `doc_${Date.now()}.bin`;
+            const cleanName = path.basename(rawName).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const uploadsDir = path.join(config.agy.workspace, "uploads");
+            const dest = path.join(uploadsDir, cleanName);
+            documentPath = await telegram.downloadFile(fileInfo.file_path, dest);
+            documentName = cleanName;
+          } else {
+            const dest = path.join(config.tempDir, `photo_${Date.now()}_${fileId.slice(-8)}${fileExt}`);
+            imagePath = await telegram.downloadFile(fileInfo.file_path, dest);
+          }
+        }
+      } catch (err) {
+        await reply(message.chat.id, `Failed to download attachment: ${(err as Error).message}`, createMainKeyboard(settingsFor(message.chat.id)));
+        return;
+      }
+    }
+
+    const text = (message.text || message.caption || "").trim();
+    if (!text && !imagePath && !documentPath) return;
+
+    const parts = text.split(/\s+/);
+    const command = parts[0] ? parts[0].toLowerCase().split("@")[0].replace(/_/g, "-") : "";
+    if (command === "/agy") { try { await runCustomAgy(message.chat.id, parseCommandArgs(text.slice(parts[0].length))); } catch (error) { await reply(message.chat.id, `Invalid /agy command: ${(error as Error).message}`, createMainKeyboard(settingsFor(message.chat.id))); } return; }
+    if (command.startsWith("/") && await handleCommand(message, command, parts.slice(1))) return;
+    const buttonText = text;
+    if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
+    if (buttonText.startsWith("⚙ Mode:")) { const settings = settingsFor(message.chat.id); settings.mode = settings.mode === "plan" ? "accept-edits" : "plan"; await saveSettings(message.chat.id, settings); await reply(message.chat.id, `Mode changed to ${settings.mode}.`, createMainKeyboard(settings)); return; }
+    if (text.startsWith("/")) { await reply(message.chat.id, "Unknown command. Use /menu.", createMainKeyboard(settingsFor(message.chat.id))); return; }
+    enqueueJob(message.chat.id, { prompt: text, kind: "prompt", imagePath, documentPath, documentName });
+  } catch (error) {
+    console.error("handleUpdate error:", error);
+  }
 }
 
 async function main(): Promise<void> {
@@ -663,6 +772,7 @@ async function main(): Promise<void> {
     { command: "resume", description: "Resume previous conversation from database" },
     { command: "usage", description: "Check live models & quota via PTY" },
     { command: "credits", description: "Check live AGY credits via PTY" },
+    { command: "context", description: "Show active context for current conversation" },
     { command: "tokens", description: "Show token usage and turns" },
     { command: "quota", description: "Alias for /usage" },
     { command: "status", description: "Show current job status" },

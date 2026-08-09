@@ -1,9 +1,19 @@
 export type ChatId = number | string;
 
-export interface ModelOption { id: string; label: string }
+export interface ModelOption { id: string; label: string; maxContextWindow?: number }
 export interface TelegramUser { id: number }
 export interface TelegramChat { id: number; type?: string }
-export interface TelegramMessage { message_id: number; chat: TelegramChat; from?: TelegramUser; text?: string }
+export interface TelegramPhotoSize { file_id: string; file_unique_id: string; width: number; height: number; file_size?: number }
+export interface TelegramDocument { file_id: string; file_name?: string; mime_type?: string; file_size?: number }
+export interface TelegramMessage {
+  message_id: number;
+  chat: TelegramChat;
+  from?: TelegramUser;
+  text?: string;
+  caption?: string;
+  photo?: TelegramPhotoSize[];
+  document?: TelegramDocument;
+}
 export interface TelegramCallbackQuery { id: string; from: TelegramUser; data?: string; message?: TelegramMessage }
 export interface TelegramUpdate { update_id: number; message?: TelegramMessage; callback_query?: TelegramCallbackQuery }
 export interface InlineButton { text: string; callback_data: string }
@@ -138,4 +148,7 @@ export interface RunnerOptions {
   jsonSchema?: string | null;
   logFile?: string | null;
   dangerouslySkipPermissions?: boolean;
+  imagePath?: string;
+  documentPath?: string;
+  documentName?: string;
 }

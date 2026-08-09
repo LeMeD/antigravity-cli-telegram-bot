@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
+import { getModelMaxContext, renderContextProgressBar } from "../src/models.js";
 
 const base = { TELEGRAM_BOT_TOKEN: "token", TELEGRAM_ALLOWED_USER_IDS: "123,456", AGY_WORKSPACE: "/srv/workspace" };
 test("loads safe defaults and allowlist", () => { const config = loadConfig(base); assert.deepEqual(config.telegram.allowedUserIds, ["123", "456"]); assert.equal(config.telegram.privateOnly, true); assert.equal(config.agy.mode, "plan"); assert.equal(config.agy.sandbox, true); assert.equal(config.agy.allowSandboxDisable, false); assert.equal(config.agy.allowDangerouslySkipPermissions, false); assert.equal(config.agy.effort, "high"); assert.ok(config.agy.allowedModels.includes("claude-sonnet-4-6")); });
@@ -11,4 +12,12 @@ test("loads and resolves AGY_DB_PATH with home directory expansion", () => {
   const config = loadConfig({ ...base, AGY_DB_PATH: "~/custom_conv.db" });
   assert.ok(!config.agy.dbPath.startsWith("~"));
   assert.ok(config.agy.dbPath.endsWith("custom_conv.db"));
+});
+
+test("calculates max context limits and renders progress bar", () => {
+  assert.equal(getModelMaxContext("gemini-3.6-flash-high"), 1_000_000);
+  assert.equal(getModelMaxContext("claude-sonnet-4-6"), 200_000);
+  const bar = renderContextProgressBar(150000, 1000000);
+  assert.ok(bar.includes("15.0%"));
+  assert.ok(bar.includes("150,000 / 1M"));
 });
