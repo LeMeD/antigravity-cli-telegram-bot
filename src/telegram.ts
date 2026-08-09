@@ -1,6 +1,7 @@
 import type { ChatId, InlineKeyboardMarkup, ReplyMarkup, TelegramUpdate } from "./types.js";
 
 const API_ROOT = (token: string): string => `https://api.telegram.org/bot${token}`;
+export type TelegramParseMode = "HTML";
 
 export class TelegramClient {
   private readonly root: string;
@@ -12,7 +13,9 @@ export class TelegramClient {
     return body.result as T;
   }
   public getUpdates(offset: number, signal?: AbortSignal): Promise<TelegramUpdate[]> { return this.call("getUpdates", { offset, timeout: 30, allowed_updates: ["message", "callback_query"] }, signal); }
-  public sendMessage(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): Promise<{ message_id: number }> { return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }); }
+  public sendMessage(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup, parseMode?: TelegramParseMode): Promise<{ message_id: number }> {
+    return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+  }
   public async editMessageText(chatId: ChatId, messageId: number, text: string, replyMarkup?: InlineKeyboardMarkup): Promise<void> {
     try {
       await this.call("editMessageText", { chat_id: chatId, message_id: messageId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
@@ -38,4 +41,71 @@ export function splitMessage(text: string, maxChars: number): string[] {
   const chunks: string[] = []; let rest = text;
   while (rest.length > maxChars) { let cut = rest.lastIndexOf("\n", maxChars); if (cut < Math.floor(maxChars * 0.5)) cut = maxChars; chunks.push(rest.slice(0, cut)); rest = rest.slice(cut).replace(/^\n+/, ""); }
   if (rest) chunks.push(rest); return chunks;
+}
+
+/** Converts the Markdown-like output AGY commonly produces to safe Telegram HTML. */
+export function formatTelegramHtml(text: string): string {
+  const normalized = text.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return "";
+  const lines = normalized.split("\n");
+  const output: string[] = [];
+  let codeLines: string[] | null = null;
+  let codeLanguage = "";
+  for (const line of lines) {
+    const fence = line.match(/^\s*```\s*([\w+-]*)\s*$/);
+    if (fence) {
+      if (codeLines) {
+        const language = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : "";
+        output.push(`<pre><code${language}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        codeLines = null;
+        codeLanguage = "";
+      } else {
+        codeLines = [];
+        codeLanguage = fence[1] || "";
+      }
+      continue;
+    }
+    if (codeLines) {
+      codeLines.push(line);
+      continue;
+    }
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      output.push(`<b>${formatInlineHtml(heading[1])}</b>`);
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (bullet) {
+      output.push(`• ${formatInlineHtml(bullet[1])}`);
+      continue;
+    }
+    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+    if (numbered) {
+      output.push(`${numbered[1]}. ${formatInlineHtml(numbered[2])}`);
+      continue;
+    }
+    output.push(formatInlineHtml(line));
+  }
+  if (codeLines) output.push(`<pre><code${codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : ""}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+  return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function formatInlineHtml(value: string): string {
+  const tokens: string[] = [];
+  const token = (html: string): string => {
+    const marker = `\u0000${tokens.length}\u0000`;
+    tokens.push(html);
+    return marker;
+  };
+  let escaped = escapeHtml(value);
+  escaped = escaped.replace(/`([^`\n]+)`/g, (_match, code: string) => token(`<code>${code}</code>`));
+  escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => token(`<a href="${url}">${label}</a>`));
+  escaped = escaped.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_match, boldA: string | undefined, boldB: string | undefined) => `<b>${boldA || boldB}</b>`);
+  escaped = escaped.replace(/~~(.+?)~~/g, "<s>$1</s>");
+  escaped = escaped.replace(/\*([^*\n]+)\*|_([^_\n]+)_/g, (_match, italicA: string | undefined, italicB: string | undefined) => `<i>${italicA || italicB}</i>`);
+  return escaped.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => tokens[Number(index)] || "");
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

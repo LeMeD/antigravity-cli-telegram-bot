@@ -7,7 +7,7 @@ import { modelLabel } from "./models.js";
 import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
-import { splitMessage, TelegramClient } from "./telegram.js";
+import { formatTelegramHtml, splitMessage, TelegramClient } from "./telegram.js";
 import type { AppConfig, ChatId, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
@@ -37,6 +37,19 @@ async function reply(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): P
   const chunks = splitMessage(text, config.telegram.maxMessageChars);
   for (let index = 0; index < chunks.length; index += 1) {
     await telegram.sendMessage(chatId, chunks[index], index === chunks.length - 1 ? replyMarkup : undefined);
+  }
+}
+
+async function replyWithFormattedResponse(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): Promise<void> {
+  const html = formatTelegramHtml(text);
+  if (!html || html.length > config.telegram.maxMessageChars) {
+    await reply(chatId, text, replyMarkup);
+    return;
+  }
+  try {
+    await telegram.sendMessage(chatId, html, replyMarkup, "HTML");
+  } catch {
+    await reply(chatId, text, replyMarkup);
   }
 }
 
@@ -425,7 +438,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage)}`);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
-    else await reply(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
+    else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
     if (!isCancelled()) { if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined); await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId))); }
   } finally { controllers.delete(String(job.chatId)); }

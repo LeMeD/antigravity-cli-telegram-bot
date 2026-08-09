@@ -71,3 +71,8 @@ test("returns successful stderr output for CLIs that print help there", async ()
   const output = await runAgyCommand({ ...config, bin: process.execPath }, ["-e", "process.stderr.write('Usage: agy --help')"]);
   assert.equal(output, "Usage: agy --help");
 });
+
+test("extracts nested final response text from stream results", () => {
+  const parsed = parseStreamOutput(JSON.stringify({ event: "result", result: { result: { final_output: "nested answer" }, status: "SUCCESS" } }));
+  assert.equal(parsed.text, "nested answer");
+});

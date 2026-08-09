@@ -181,7 +181,7 @@ export function parseStreamOutput(stdout: string): AgyResult {
       if (step?.tool_info || step?.subagent_info || isToolStep(stringValue(step?.step_type))) toolCalls += 1;
       const stepUsage = normalizeUsage(step?.usage);
       if (stepUsage) usage = stepUsage;
-      streamedResponse += stringValue(step?.text_delta) || "";
+      streamedResponse += stringValue(step?.text_delta) || stringValue(step?.text) || "";
     }
     if (event.event === "result") {
       finalEvent = event;
@@ -192,6 +192,7 @@ export function parseStreamOutput(stdout: string): AgyResult {
       numTurns = numberOrNull(result?.num_turns);
       if (Number.isSafeInteger(result?.tool_calls)) toolCalls = result?.tool_calls as number;
     }
+    if (!response && event.event !== "step_update") response = pickText(event) || response;
   }
   return {
     text: response.trim() || streamedResponse.trim() || "AGY returned no output.", parsed: finalEvent, events,
@@ -267,7 +268,18 @@ function parseJsonOutput(stdout: string): AgyResult {
   } catch { return { text: stdout.trim() || "AGY returned no output.", parsed: null, events: [], conversationId: null, model: null, usage: null, durationMs: null, numTurns: null, toolCalls: 0, status: null }; }
 }
 
-function pickText(value: Record<string, unknown> | undefined): string { if (!value) return ""; for (const key of ["response", "result", "output", "finalOutput", "final_output", "message", "text", "content"]) { if (typeof value[key] === "string" && (value[key] as string).trim()) return value[key] as string; } return ""; }
+function pickText(value: Record<string, unknown> | undefined): string {
+  if (!value) return "";
+  for (const key of ["response", "result", "output", "finalOutput", "final_output", "finalResponse", "final_response", "message", "text", "content", "answer"]) {
+    if (typeof value[key] === "string" && (value[key] as string).trim()) return value[key] as string;
+  }
+  for (const key of ["result", "data", "answer"]) {
+    const nested = asRecord(value[key]);
+    const text = pickText(nested);
+    if (text) return text;
+  }
+  return "";
+}
 function asRecord(value: unknown): Record<string, unknown> | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 function stringValue(value: unknown): string | null { return typeof value === "string" && value ? value : null; }
 function numberOrNull(value: unknown, transform: (value: number) => number = (item) => item): number | null { const number = Number(value); return Number.isFinite(number) ? transform(number) : null; }
