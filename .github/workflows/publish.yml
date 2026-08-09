@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -42,3 +43,52 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_SECRET }}
+
+  publish-github:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://npm.pkg.github.com
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Prepare scoped GitHub Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          mkdir -p .github-package
+          npm pack --pack-destination .github-package
+          tar -xzf ".github-package/agy-telegram-${version}.tgz" \
+            -C .github-package --strip-components=1
+          rm ".github-package/agy-telegram-${version}.tgz"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const file = ".github-package/package.json";
+          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+          pkg.name = "@ardiannurcahya/agy-telegram";
+          pkg.publishConfig = {
+            ...(pkg.publishConfig || {}),
+            registry: "https://npm.pkg.github.com",
+          };
+          fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          node -e 'const p=require("./.github-package/package.json"); console.log(p.name+"@"+p.version)'
+
+      - name: Publish scoped package
+        working-directory: .github-package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

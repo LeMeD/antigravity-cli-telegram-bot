@@ -32,6 +32,7 @@ user.
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Install From npm](#install-from-npm)
+- [Install From GitHub Packages](#install-from-github-packages)
 - [Telegram Commands](#telegram-commands)
 - [Configuration](#configuration)
 - [Production Deployment](#production-deployment)
@@ -431,11 +432,43 @@ The package can be tested locally before publishing:
 
 ```bash
 npm pack
-npm install --global ./agy-telegram-0.1.3.tgz
+npm install --global ./agy-telegram-0.1.4.tgz
 ```
 
 Do not commit the generated `.tgz` file. It is ignored by Git and should be
 removed after a local installation test.
+
+## Install From GitHub Packages
+
+The project publishes two package names from the same source:
+
+- npmjs: `agy-telegram`
+- GitHub Packages: `@ardiannurcahya/agy-telegram`
+
+GitHub Packages requires npm packages to use a lowercase scope. The release
+workflow creates the scoped GitHub Package metadata in a temporary directory,
+publishes it to `https://npm.pkg.github.com`, and links it to this repository
+through the `repository` field. It authenticates from GitHub Actions with the
+workflow `GITHUB_TOKEN` and does not require a token in the repository.
+
+To install from GitHub Packages, create a user-level or project-local `.npmrc`
+without committing a real token:
+
+```ini
+@ardiannurcahya:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Use a GitHub personal access token (classic) with at least `read:packages` in
+`GITHUB_PACKAGES_TOKEN`, then install the scoped package:
+
+```bash
+npm install --global @ardiannurcahya/agy-telegram --registry=https://npm.pkg.github.com
+```
+
+The GitHub Package is published when a release tag such as `v0.1.4` is pushed.
+After its first publication, its visibility and access policy can be reviewed
+from the repository's **Packages** page.
 
 ## npm Publishing
 
