@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { ChatId, InlineKeyboardMarkup, ReplyMarkup, TelegramUpdate } from "./types.js";
 
 const API_ROOT = (token: string): string => `https://api.telegram.org/bot${token}`;
@@ -5,7 +7,7 @@ export type TelegramParseMode = "HTML";
 
 export class TelegramClient {
   private readonly root: string;
-  public constructor(token: string) { this.root = API_ROOT(token); }
+  public constructor(private readonly token: string) { this.root = API_ROOT(token); }
   public async call<T>(method: string, payload: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
     const response = await fetch(`${this.root}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal });
     const body = await response.json() as { ok: boolean; result?: T; description?: string };
@@ -45,6 +47,18 @@ export class TelegramClient {
     const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
     if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
     return body.result;
+  }
+  public getFile(fileId: string): Promise<{ file_id: string; file_path?: string; file_size?: number }> {
+    return this.call("getFile", { file_id: fileId });
+  }
+  public async downloadFile(filePath: string, destination: string): Promise<string> {
+    const fileUrl = `https://api.telegram.org/file/bot${this.token}/${filePath}`;
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error(`Download file failed: ${response.statusText}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, buffer);
+    return destination;
   }
 }
 

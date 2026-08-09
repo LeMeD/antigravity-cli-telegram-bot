@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import type { AgyConfig, AgyResult, RunnerOptions, StreamEvent, Usage } from "./types.js";
 
 const CONVERSATION_KEYS = new Set(["conversationId", "conversation_id", "conversationID", "sessionId", "session_id"]);
@@ -6,13 +8,26 @@ const CONVERSATION_KEYS = new Set(["conversationId", "conversation_id", "convers
 export function buildArgs(config: AgyConfig, prompt: string, conversationId: string | null, overrides: RunnerOptions = {}): string[] {
   const effective = { ...config, ...overrides };
   const outputFormat = effective.outputFormat || "stream-json";
-  const args = ["--print", prompt, "--output-format", outputFormat, "--print-timeout", effective.printTimeout || `${Math.ceil(effective.timeoutMs / 1000)}s`];
+  let finalPrompt = prompt;
+  if (overrides.imagePath) {
+    finalPrompt = prompt.trim()
+      ? `${prompt}\n\n[Image attached: ${overrides.imagePath}]`
+      : `Please analyze this image: ${overrides.imagePath}`;
+  } else if (overrides.documentPath) {
+    finalPrompt = prompt.trim()
+      ? `${prompt}\n\n[Document attached: ${overrides.documentPath}]`
+      : `Please read and analyze this document: ${overrides.documentPath}`;
+  }
+  const args = ["--print", finalPrompt, "--output-format", outputFormat, "--print-timeout", effective.printTimeout || `${Math.ceil(effective.timeoutMs / 1000)}s`];
   if (effective.project) args.push("--project", effective.project);
   if (effective.mode) args.push("--mode", effective.mode);
   if (effective.model) args.push("--model", effective.model);
   if (effective.effort) args.push("--effort", effective.effort);
   if (effective.agent) args.push("--agent", effective.agent);
-  for (const addDir of effective.addDirs || []) args.push("--add-dir", addDir);
+  const dirs = new Set(effective.addDirs || []);
+  if (overrides.imagePath) dirs.add(path.dirname(overrides.imagePath));
+  if (overrides.documentPath) dirs.add(path.dirname(overrides.documentPath));
+  for (const addDir of dirs) args.push("--add-dir", addDir);
   if (effective.newProject) args.push("--new-project");
   if (effective.disableSlashCommands) args.push("--disable-slash-commands");
   if (effective.jsonSchema) args.push("--json-schema", effective.jsonSchema);
@@ -235,10 +250,44 @@ export function runAgy(config: AgyConfig, prompt: string, conversationId: string
       if (!line.trim()) return;
       try { onEvent?.(JSON.parse(line) as StreamEvent); } catch (error) { if (error instanceof Error) callbackError ||= error; }
     };
+    const processTree = (rootPid: number): number[] => {
+      const children = new Map<number, number[]>();
+      for (const entry of readdirSync("/proc", { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+        try {
+          const fields = readFileSync(`/proc/${entry.name}/stat`, "utf8").split(" ");
+          const pid = Number(entry.name);
+          const parentPid = Number(fields[3]);
+          if (Number.isSafeInteger(pid) && Number.isSafeInteger(parentPid)) {
+            const list = children.get(parentPid) || [];
+            list.push(pid);
+            children.set(parentPid, list);
+          }
+        } catch { /* process exited while inspecting /proc */ }
+      }
+      const result: number[] = [];
+      const visit = (pid: number): void => {
+        for (const childPid of children.get(pid) || []) {
+          result.push(childPid);
+          visit(childPid);
+        }
+      };
+      visit(rootPid);
+      return result.reverse();
+    };
     const stop = (): void => {
       if (!child.pid) return;
+      const descendants = processTree(child.pid);
       try { process.kill(-child.pid, "SIGTERM"); } catch { /* already exited */ }
-      setTimeout(() => { try { process.kill(-child.pid!, "SIGKILL"); } catch { /* already exited */ } }, 5000).unref();
+      for (const pid of descendants) {
+        try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
+      }
+      setTimeout(() => {
+        try { process.kill(-child.pid!, "SIGKILL"); } catch { /* already exited */ }
+        for (const pid of descendants) {
+          try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
+        }
+      }, 5000).unref();
     };
     const abort = (): void => { stop(); finish(reject as (value: never) => void, new Error("AGY job cancelled") as never); };
     const timer = setTimeout(() => { timedOut = true; stop(); }, config.timeoutMs);

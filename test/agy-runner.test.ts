@@ -97,3 +97,19 @@ test("enables full-control permissions from explicit config", () => {
   const fullControl = { ...config, allowDangerouslySkipPermissions: true };
   assert.ok(buildArgs(fullControl, "hello", null).includes("--dangerously-skip-permissions"));
 });
+
+test("attaches image file reference and directory in buildArgs", () => {
+  const args = buildArgs(config, "Describe this photo", null, { imagePath: "/tmp/uploads/photo_123.jpg" });
+  assert.ok(args[1].includes("Describe this photo"));
+  assert.ok(args[1].includes("[Image attached: /tmp/uploads/photo_123.jpg]"));
+  assert.ok(args.includes("--add-dir"));
+  assert.ok(args.includes("/tmp/uploads"));
+});
+
+test("attaches document file reference and directory in buildArgs", () => {
+  const args = buildArgs(config, "Summarize this PDF", null, { documentPath: "/tmp/workspace/uploads/report.pdf", documentName: "report.pdf" });
+  assert.ok(args[1].includes("Summarize this PDF"));
+  assert.ok(args[1].includes("[Document attached: /tmp/workspace/uploads/report.pdf]"));
+  assert.ok(args.includes("--add-dir"));
+  assert.ok(args.includes("/tmp/workspace/uploads"));
+});
