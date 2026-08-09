@@ -334,8 +334,10 @@ function isDangerousCustomCommand(args: string[]): boolean {
 
 function customArgsForExecution(args: string[]): string[] {
   const isPrintCommand = args.includes("--print") || args.includes("-p") || args.includes("--prompt");
-  if (isPrintCommand && config.agy.sandbox && !config.agy.allowSandboxDisable && !args.includes("--sandbox")) return [...args, "--sandbox"];
-  return args;
+  const executionArgs = [...args];
+  if (isPrintCommand && config.agy.sandbox && !config.agy.allowSandboxDisable && !executionArgs.includes("--sandbox")) executionArgs.push("--sandbox");
+  if (isPrintCommand && config.agy.allowDangerouslySkipPermissions && !executionArgs.includes("--dangerously-skip-permissions")) executionArgs.push("--dangerously-skip-permissions");
+  return executionArgs;
 }
 
 async function runCustomAgy(chatId: ChatId, args: string[], confirmed = false): Promise<void> {

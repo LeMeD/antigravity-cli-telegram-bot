@@ -76,3 +76,17 @@ test("extracts nested final response text from stream results", () => {
   const parsed = parseStreamOutput(JSON.stringify({ event: "result", result: { result: { final_output: "nested answer" }, status: "SUCCESS" } }));
   assert.equal(parsed.text, "nested answer");
 });
+
+test("surfaces tool errors when AGY finishes without response text", () => {
+  const parsed = parseStreamOutput(JSON.stringify({
+    event: "step_update",
+    step_update: { state: "ERROR", tool_info: { error: { message: "User denied permission to run command" } } },
+  }) + "\n" + JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "" } }));
+  assert.match(parsed.text, /could not complete/i);
+  assert.match(parsed.text, /denied permission/);
+});
+
+test("enables full-control permissions from explicit config", () => {
+  const fullControl = { ...config, allowDangerouslySkipPermissions: true };
+  assert.ok(buildArgs(fullControl, "hello", null).includes("--dangerously-skip-permissions"));
+});

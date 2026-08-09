@@ -225,11 +225,11 @@ through the inline menu and slash commands.
 The inline menu exposes common flags and plugin actions; the custom command
 panel covers the complete CLI surface. `--prompt-interactive` is reported but
 rejected because it requires a local TTY. Plugin installation/removal, CLI
-update, `agy install`, and `--dangerously-skip-permissions` require a second
-`/agy-confirm` message. The permission bypass flag is disabled unless
-`AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS=1` is explicitly configured, and the
-gateway preserves the configured sandbox policy for normal `/agy --print`
-commands.
+update, and `agy install` require a second `/agy-confirm` message. With
+`AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS=1`, normal prompts and `/agy --print`
+commands automatically approve tool permissions so ordinary shell commands
+can run without an interactive approval prompt. The configured sandbox policy,
+service user, workspace, and systemd restrictions remain in force.
 
 ## Configuration
 
@@ -252,7 +252,7 @@ following variables are supported:
 | `AGY_MODEL` | Empty | Default model. Empty uses AGY's default model. |
 | `AGY_EFFORT` | `high` | Default reasoning effort: `low`, `medium`, or `high`. |
 | `AGY_AGENT` | Empty | Optional default custom agent passed as `--agent`. |
-| `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` | `0` | Permit the dangerous permission flag after explicit Telegram confirmation. Keep disabled. |
+| `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` | `1` | Full-control mode: automatically approve AGY tool permissions for normal prompts. Keep the sandbox and service restrictions enabled. |
 | `AGY_ALLOWED_MODELS` | All known models | Comma-separated allowlist used by `/models` and `/model`. |
 | `AGY_TIMEOUT_MS` | `1800000` | Maximum AGY runtime in milliseconds. |
 | `AGY_MAX_OUTPUT_BYTES` | `20000000` | Maximum captured AGY output. |
@@ -359,7 +359,9 @@ an untrusted user. Keep all of the following controls enabled:
 - Give AGY a dedicated, least-privilege workspace rather than `/root` or `/`.
 - Keep `AGY_MODE=plan` for unattended operation unless edits are explicitly intended.
 - Keep `AGY_SANDBOX=1` and `AGY_ALLOW_SANDBOX_DISABLE=0` by default.
-- Do not add `--dangerously-skip-permissions` to the runner.
+- Full-control mode may add `--dangerously-skip-permissions` automatically for
+  normal prompts; keep `AGY_SANDBOX=1`, the dedicated service user, and the
+  systemd workspace restrictions enabled.
 - Store `/etc/agy-telegram.env` and the state file with mode `0600`.
 - Keep SSH keys, cloud credentials, AGY credentials, and unrelated repositories
   outside the AGY workspace.

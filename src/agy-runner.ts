@@ -18,7 +18,7 @@ export function buildArgs(config: AgyConfig, prompt: string, conversationId: str
   if (effective.disableSlashCommands) args.push("--disable-slash-commands");
   if (effective.jsonSchema) args.push("--json-schema", effective.jsonSchema);
   if (effective.logFile) args.push("--log-file", effective.logFile);
-  if (effective.dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
+  if (effective.dangerouslySkipPermissions || config.allowDangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
   if (effective.sandbox) args.push("--sandbox");
   if (conversationId && !effective.continueSession) args.push("--conversation", conversationId);
   return args;
@@ -165,6 +165,7 @@ export function parseStreamOutput(stdout: string): AgyResult {
   let durationMs: number | null = null;
   let numTurns: number | null = null;
   let toolCalls = 0;
+  let executionError = "";
 
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -182,6 +183,7 @@ export function parseStreamOutput(stdout: string): AgyResult {
       const stepUsage = normalizeUsage(step?.usage);
       if (stepUsage) usage = stepUsage;
       streamedResponse += stringValue(step?.text_delta) || stringValue(step?.text) || "";
+      executionError ||= pickError(step);
     }
     if (event.event === "result") {
       finalEvent = event;
@@ -191,11 +193,12 @@ export function parseStreamOutput(stdout: string): AgyResult {
       durationMs = numberOrNull(result?.duration_seconds, (value) => value * 1000);
       numTurns = numberOrNull(result?.num_turns);
       if (Number.isSafeInteger(result?.tool_calls)) toolCalls = result?.tool_calls as number;
+      executionError ||= pickError(result);
     }
     if (!response && event.event !== "step_update") response = pickText(event) || response;
   }
   return {
-    text: response.trim() || streamedResponse.trim() || "AGY returned no output.", parsed: finalEvent, events,
+    text: response.trim() || streamedResponse.trim() || (executionError ? `AGY could not complete the request.\n\n${executionError}` : "AGY returned no output."), parsed: finalEvent, events,
     conversationId, model, usage, durationMs, numTurns, toolCalls, status: stringValue(asRecord(finalEvent?.result)?.status),
   };
 }
@@ -278,6 +281,19 @@ function pickText(value: Record<string, unknown> | undefined): string {
     const text = pickText(nested);
     if (text) return text;
   }
+  return "";
+}
+function pickError(value: Record<string, unknown> | undefined): string {
+  if (!value) return "";
+  const error = value.error;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (asRecord(error)) return pickError(asRecord(error));
+  for (const nestedKey of ["tool_info", "result", "data"]) {
+    const nestedError = pickError(asRecord(value[nestedKey]));
+    if (nestedError) return nestedError;
+  }
+  if (value.state === "ERROR" && typeof value.message === "string" && value.message.trim()) return value.message.trim();
+  if (typeof value.message === "string" && value.message.trim()) return value.message.trim();
   return "";
 }
 function asRecord(value: unknown): Record<string, unknown> | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
