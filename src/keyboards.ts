@@ -1,19 +1,12 @@
-import { modelLabel } from "./models.js";
 import type { ReplyKeyboardMarkup, SessionSettings } from "./types.js";
 
-function compactModelLabel(model: string | null): string {
-  const label = modelLabel(model).replace(/\s+\([^)]*\)$/, "");
-  return label.length > 24 ? `${label.slice(0, 22)}...` : label;
-}
+function modeLabel(mode: SessionSettings["mode"]): string { return mode === "accept-edits" ? "edit" : "plan"; }
 
 /** Persistent keyboard shown immediately above Telegram's input field. */
 export function createMainKeyboard(settings: SessionSettings): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [`🤖 ${compactModelLabel(settings.model)}`, `🧠 Effort: ${settings.effort}`],
-      [`⚙ Mode: ${settings.mode}`, `🔒 Sandbox: ${settings.sandbox ? "on" : "off"}`],
-      ["📊 Usage / Quota", "🧾 Session"],
-      ["🆕 New session", "⛔ Cancel"],
+      ["📋 Plan", `⚙ Mode: ${modeLabel(settings.mode)}`],
     ],
     resize_keyboard: true,
     is_persistent: true,

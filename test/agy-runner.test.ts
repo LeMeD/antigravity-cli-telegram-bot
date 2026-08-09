@@ -1,12 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildArgs, extractConversationId, formatStepUpdate, normalizeUsage, parseStreamOutput } from "../src/agy-runner.js";
+import { buildArgs, extractConversationId, formatStepUpdate, normalizeUsage, parseCommandArgs, parseStreamOutput, runAgyCommand, validateCustomArgs } from "../src/agy-runner.js";
 import type { AgyConfig } from "../src/types.js";
 
-const config: AgyConfig = { timeoutMs: 60000, project: "project", mode: "plan", model: "model", effort: "high", sandbox: true, allowSandboxDisable: false, allowedModels: [], bin: "agy", workspace: "/tmp" , maxOutputBytes: 2000000 };
+const config: AgyConfig = { timeoutMs: 60000, project: "project", mode: "plan", model: "model", effort: "high", sandbox: true, allowSandboxDisable: false, allowDangerouslySkipPermissions: false, allowedModels: [], bin: "agy", workspace: "/tmp" , maxOutputBytes: 2000000 };
 
 test("builds non-interactive safe AGY arguments", () => {
   assert.deepEqual(buildArgs(config, "hello", "conv-1"), ["--print", "hello", "--output-format", "stream-json", "--print-timeout", "60s", "--project", "project", "--mode", "plan", "--model", "model", "--effort", "high", "--sandbox", "--conversation", "conv-1"]);
+});
+
+test("passes the selected agent to AGY", () => {
+  const args = buildArgs(config, "hello", null, { agent: "reviewer" });
+  const index = args.indexOf("--agent");
+  assert.equal(index >= 0, true);
+  assert.deepEqual(args.slice(index, index + 2), ["--agent", "reviewer"]);
+});
+
+test("builds the complete non-interactive option set", () => {
+  assert.deepEqual(buildArgs(config, "hello", null, {
+    agent: "reviewer", addDirs: ["/one", "/two"], continueSession: true, newProject: true,
+    disableSlashCommands: true, jsonSchema: '{"type":"object"}', logFile: "/tmp/agy.log",
+    printTimeout: "10m", dangerouslySkipPermissions: true,
+  }), ["--print", "hello", "--output-format", "stream-json", "--print-timeout", "10m", "--project", "project", "--mode", "plan", "--model", "model", "--effort", "high", "--agent", "reviewer", "--add-dir", "/one", "--add-dir", "/two", "--continue", "--new-project", "--disable-slash-commands", "--json-schema", '{"type":"object"}', "--log-file", "/tmp/agy.log", "--dangerously-skip-permissions", "--sandbox"]);
+});
+
+test("parses quoted custom command arguments without a shell", () => {
+  assert.deepEqual(parseCommandArgs('--print "say \\"hello\\"" --output-format text'), ["--print", 'say "hello"', "--output-format", "text"]);
+  assert.deepEqual(parseCommandArgs('--project "" --print hello'), ["--project", "", "--print", "hello"]);
+  assert.equal(validateCustomArgs(["--print", "hello"]), null);
+  assert.equal(validateCustomArgs(["plugin", "list"]), null);
+  assert.match(validateCustomArgs(["--prompt-interactive", "hello"]) || "", /TTY/);
+  assert.equal(validateCustomArgs(["models"]), null);
+  assert.equal(validateCustomArgs(["--help"]), null);
 });
 
 test("builds per-session overrides without unsafe flags", () => {
@@ -35,4 +60,14 @@ test("normalizes usage and formats progress", () => {
   assert.equal(normalizeUsage(null), null);
   assert.equal(formatStepUpdate({ tool_info: { name: "run_command" } }), "Tool: run_command");
   assert.equal(formatStepUpdate({ step_type: "agent_response" }), "Generating response...");
+});
+
+test("runs a read-only AGY subcommand without Telegram secrets", async () => {
+  const output = await runAgyCommand({ ...config, bin: process.execPath }, ["-e", "process.stdout.write(process.env.TELEGRAM_BOT_TOKEN || 'clean')"]);
+  assert.equal(output, "clean");
+});
+
+test("returns successful stderr output for CLIs that print help there", async () => {
+  const output = await runAgyCommand({ ...config, bin: process.execPath }, ["-e", "process.stderr.write('Usage: agy --help')"]);
+  assert.equal(output, "Usage: agy --help");
 });

@@ -21,6 +21,17 @@ export interface SessionSettings {
   effort: "low" | "medium" | "high";
   mode: "plan" | "accept-edits";
   sandbox: boolean;
+  agent?: string | null;
+  project?: string | null;
+  addDirs?: string[];
+  continueSession?: boolean;
+  newProject?: boolean;
+  disableSlashCommands?: boolean;
+  jsonSchema?: string | null;
+  logFile?: string | null;
+  outputFormat?: "text" | "json" | "stream-json";
+  printTimeout?: string | null;
+  dangerouslySkipPermissions?: boolean;
 }
 
 export interface Usage {
@@ -63,6 +74,8 @@ export interface AgyConfig {
   allowedModels: string[];
   timeoutMs: number;
   maxOutputBytes: number;
+  agent?: string;
+  allowDangerouslySkipPermissions: boolean;
 }
 
 export interface AppConfig {
@@ -102,6 +115,15 @@ export interface RunnerOptions {
   effort?: "low" | "medium" | "high";
   mode?: "plan" | "accept-edits";
   sandbox?: boolean;
-  project?: string;
+  project?: string | null;
   outputFormat?: string;
+  printTimeout?: string | null;
+  agent?: string | null;
+  addDirs?: string[];
+  continueSession?: boolean;
+  newProject?: boolean;
+  disableSlashCommands?: boolean;
+  jsonSchema?: string | null;
+  logFile?: string | null;
+  dangerouslySkipPermissions?: boolean;
 }

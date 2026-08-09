@@ -27,6 +27,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       sandbox: booleanFrom(env, "AGY_SANDBOX", true), allowSandboxDisable: booleanFrom(env, "AGY_ALLOW_SANDBOX_DISABLE", false),
       model, effort, allowedModels, timeoutMs: positiveIntegerFrom(env, "AGY_TIMEOUT_MS", 1_800_000),
       maxOutputBytes: positiveIntegerFrom(env, "AGY_MAX_OUTPUT_BYTES", 20_000_000),
+      agent: (env.AGY_AGENT || "").trim() || undefined,
+      allowDangerouslySkipPermissions: booleanFrom(env, "AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS", false),
     },
     queue: { maxSize: positiveIntegerFrom(env, "MAX_QUEUE_SIZE", 8) },
     stateFile: (env.STATE_FILE || "/var/lib/agy-telegram/state.json").trim(),

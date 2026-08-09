@@ -7,8 +7,13 @@ test("splits Telegram messages near line boundaries", () => { const chunks = spl
 
 test("builds a persistent reply keyboard beside the input", () => {
   const keyboard = createMainKeyboard({ model: "gemini-3.6-flash-high", effort: "high", mode: "plan", sandbox: true });
-  assert.deepEqual(keyboard.keyboard[2], ["📊 Usage / Quota", "🧾 Session"]);
+  assert.deepEqual(keyboard.keyboard, [["📋 Plan", "⚙ Mode: plan"]]);
   assert.equal(keyboard.resize_keyboard, true);
   assert.equal(keyboard.is_persistent, true);
   assert.equal("inline_keyboard" in keyboard, false);
+});
+
+test("labels accept-edits as edit in the persistent keyboard", () => {
+  const keyboard = createMainKeyboard({ model: null, effort: "medium", mode: "accept-edits", sandbox: true });
+  assert.deepEqual(keyboard.keyboard, [["📋 Plan", "⚙ Mode: edit"]]);
 });

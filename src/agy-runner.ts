@@ -6,14 +6,128 @@ const CONVERSATION_KEYS = new Set(["conversationId", "conversation_id", "convers
 export function buildArgs(config: AgyConfig, prompt: string, conversationId: string | null, overrides: RunnerOptions = {}): string[] {
   const effective = { ...config, ...overrides };
   const outputFormat = effective.outputFormat || "stream-json";
-  const args = ["--print", prompt, "--output-format", outputFormat, "--print-timeout", `${Math.ceil(effective.timeoutMs / 1000)}s`];
+  const args = ["--print", prompt, "--output-format", outputFormat, "--print-timeout", effective.printTimeout || `${Math.ceil(effective.timeoutMs / 1000)}s`];
   if (effective.project) args.push("--project", effective.project);
   if (effective.mode) args.push("--mode", effective.mode);
   if (effective.model) args.push("--model", effective.model);
   if (effective.effort) args.push("--effort", effective.effort);
+  if (effective.agent) args.push("--agent", effective.agent);
+  for (const addDir of effective.addDirs || []) args.push("--add-dir", addDir);
+  if (effective.continueSession) args.push("--continue");
+  if (effective.newProject) args.push("--new-project");
+  if (effective.disableSlashCommands) args.push("--disable-slash-commands");
+  if (effective.jsonSchema) args.push("--json-schema", effective.jsonSchema);
+  if (effective.logFile) args.push("--log-file", effective.logFile);
+  if (effective.dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
   if (effective.sandbox) args.push("--sandbox");
-  if (conversationId) args.push("--conversation", conversationId);
+  if (conversationId && !effective.continueSession) args.push("--conversation", conversationId);
   return args;
+}
+
+/** Tokenizes a Telegram `/agy ...` command without invoking a shell. */
+export function parseCommandArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  let tokenStarted = false;
+  for (const char of input.trim()) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      tokenStarted = true;
+    } else if (char === "\\") {
+      escaped = true;
+      tokenStarted = true;
+    } else if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      tokenStarted = true;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      tokenStarted = true;
+    } else if (/\s/.test(char)) {
+      if (tokenStarted) {
+        args.push(current);
+        current = "";
+        tokenStarted = false;
+      }
+    } else {
+      current += char;
+      tokenStarted = true;
+    }
+  }
+  if (escaped) current += "\\";
+  if (quote) throw new Error("Unclosed quote in /agy command");
+  if (tokenStarted) args.push(current);
+  return args;
+}
+
+const TOP_LEVEL_COMMANDS = new Set(["agent", "agents", "changelog", "help", "install", "models", "plugin", "plugins", "update"]);
+
+export function validateCustomArgs(args: string[]): string | null {
+  if (args.length === 0) return "Usage: /agy <agy arguments>. Example: /agy --print \"Explain this project\" --output-format text";
+  if (args.includes("--prompt-interactive") || args.includes("-i")) return "--prompt-interactive requires a local TTY and is not available through Telegram. Use /agy --print \"your prompt\" instead.";
+  const first = args[0];
+  if (first && TOP_LEVEL_COMMANDS.has(first)) return null;
+  if (["--help", "-h", "--version", "-v"].includes(first || "")) return null;
+  if (!args.includes("--print") && !args.includes("-p") && !args.includes("--prompt")) return "Custom AGY commands must use --print, -p, or --prompt so they do not open an unmanaged interactive terminal.";
+  return null;
+}
+
+/** Runs a read-only AGY CLI command such as `models` or `changelog`. */
+export function runAgyCommand(config: AgyConfig, commandArgs: string[], timeoutMs = 60_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(config.bin, commandArgs, {
+      cwd: config.workspace,
+      env: (() => {
+        const {
+          TELEGRAM_BOT_TOKEN: _token,
+          TELEGRAM_ALLOWED_USER_IDS: _users,
+          TELEGRAM_ALLOWED_CHAT_IDS: _chats,
+          ...safeEnvironment
+        } = process.env;
+        return { ...safeEnvironment, NO_COLOR: "1", TERM: "dumb" };
+      })(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new Error(`AGY command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.length > config.maxOutputBytes) {
+        finish(() => {
+          child.kill("SIGTERM");
+          reject(new Error(`AGY command output exceeded ${config.maxOutputBytes} bytes`));
+        });
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.length < 4000) stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(() => reject(error)));
+    child.on("close", (code, signal) => finish(() => {
+      if (code !== 0) {
+        const detail = stderr.trim().replace(/\s+/g, " ").slice(0, 1000);
+        reject(new Error(`AGY command exited with ${code ?? signal}${detail ? `: ${detail}` : ""}`));
+        return;
+      }
+      resolve(stdout.trim() || stderr.trim() || "AGY returned no output.");
+    }));
+  });
 }
 
 export function extractConversationId(value: unknown): string | null {
