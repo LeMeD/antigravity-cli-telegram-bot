@@ -45,8 +45,35 @@ export function splitMessage(text: string, maxChars: number): string[] {
 
 /** Converts the Markdown-like output AGY commonly produces to safe Telegram HTML. */
 export function formatTelegramHtml(text: string): string {
+  return renderTelegramBlocks(text).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Formats a response into valid Telegram HTML messages under the size limit. */
+export function formatTelegramHtmlChunks(text: string, maxChars: number): string[] {
+  if (maxChars < 1) return [];
+  const blocks = renderTelegramBlocks(text);
+  const chunks: string[] = [];
+  let current = "";
+  const append = (piece: string): void => {
+    if (!piece) return;
+    const candidate = current ? `${current}\n${piece}` : piece;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      return;
+    }
+    if (current) chunks.push(current);
+    current = "";
+    if (piece.length <= maxChars) current = piece;
+    else chunks.push(...splitOversizedHtmlBlock(piece, maxChars));
+  };
+  for (const block of blocks) append(block);
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function renderTelegramBlocks(text: string): string[] {
   const normalized = text.replace(/\r\n?/g, "\n").trim();
-  if (!normalized) return "";
+  if (!normalized) return [];
   const lines = normalized.split("\n");
   const output: string[] = [];
   let codeLines: string[] | null = null;
@@ -87,7 +114,20 @@ export function formatTelegramHtml(text: string): string {
     output.push(formatInlineHtml(line));
   }
   if (codeLines) output.push(`<pre><code${codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : ""}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
-  return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return output;
+}
+
+function splitOversizedHtmlBlock(block: string, maxChars: number): string[] {
+  const code = block.match(/^<pre><code( class="[^"]+")?>([\s\S]*)<\/code><\/pre>$/);
+  if (!code) return splitMessage(stripHtmlTags(block), maxChars).map(escapeHtml);
+  const open = `<pre><code${code[1] || ""}>`;
+  const close = "</code></pre>";
+  const contentLimit = Math.max(1, maxChars - open.length - close.length);
+  return splitMessage(code[2], contentLimit).map((part) => `${open}${part}${close}`);
+}
+
+function stripHtmlTags(value: string): string {
+  return value.replace(/<[^>]*>/g, "");
 }
 
 function formatInlineHtml(value: string): string {
@@ -100,6 +140,7 @@ function formatInlineHtml(value: string): string {
   let escaped = escapeHtml(value);
   escaped = escaped.replace(/`([^`\n]+)`/g, (_match, code: string) => token(`<code>${code}</code>`));
   escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => token(`<a href="${url}">${label}</a>`));
+  escaped = escaped.replace(/\[([^\]]+)\]\(file:\/\/\/[^\s)]+\)/g, (_match, label: string) => token(`<code>${label}</code>`));
   escaped = escaped.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_match, boldA: string | undefined, boldB: string | undefined) => `<b>${boldA || boldB}</b>`);
   escaped = escaped.replace(/~~(.+?)~~/g, "<s>$1</s>");
   escaped = escaped.replace(/\*([^*\n]+)\*|_([^_\n]+)_/g, (_match, italicA: string | undefined, italicB: string | undefined) => `<i>${italicA || italicB}</i>`);

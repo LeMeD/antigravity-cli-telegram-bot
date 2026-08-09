@@ -7,7 +7,7 @@ import { modelLabel } from "./models.js";
 import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
-import { formatTelegramHtml, splitMessage, TelegramClient } from "./telegram.js";
+import { formatTelegramHtmlChunks, splitMessage, TelegramClient } from "./telegram.js";
 import type { AppConfig, ChatId, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
@@ -41,13 +41,15 @@ async function reply(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): P
 }
 
 async function replyWithFormattedResponse(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): Promise<void> {
-  const html = formatTelegramHtml(text);
-  if (!html || html.length > config.telegram.maxMessageChars) {
+  const chunks = formatTelegramHtmlChunks(text, config.telegram.maxMessageChars);
+  if (!chunks.length) {
     await reply(chatId, text, replyMarkup);
     return;
   }
   try {
-    await telegram.sendMessage(chatId, html, replyMarkup, "HTML");
+    for (let index = 0; index < chunks.length; index += 1) {
+      await telegram.sendMessage(chatId, chunks[index], index === chunks.length - 1 ? replyMarkup : undefined, "HTML");
+    }
   } catch {
     await reply(chatId, text, replyMarkup);
   }
