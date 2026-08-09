@@ -11,7 +11,7 @@ streamed progress, model controls, and a hardened systemd deployment.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-13%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-20%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -51,13 +51,16 @@ user.
 - Per-chat AGY conversation mapping when AGY returns a conversation ID.
 - Per-chat model, effort, execution mode, and sandbox settings.
 - Persistent reply keyboard beside the Telegram input.
+- Persistent keyboard limited to Plan and Mode controls.
 - Inline pickers for model, effort, mode, and sandbox selection.
+- AGY CLI panels for models, agents, changelog, plugins, CLI help, version, update, and common options.
+- Full non-interactive AGY CLI passthrough through `/agy` with shell-free argument handling.
 - Streamed progress messages and live response drafts.
 - Per-turn and accumulated token usage when AGY provides usage data.
 - Long replies uploaded as Markdown documents.
 - Process-group timeout and cancellation.
 - Strict TypeScript build with a small automated test suite.
-- No support for `--dangerously-skip-permissions`.
+- Dangerous plugin, update, install, and permission operations require an explicit second confirmation.
 - AGY is restricted to the configured workspace.
 
 ## Architecture
@@ -188,10 +191,45 @@ system prefix.
 | `/quota` | Alias for `/usage`. |
 | `/status` | Show queue and active-job status. |
 | `/cancel` | Cancel this chat's active or queued jobs. |
+| `/agents` | List available custom AGY agents. |
+| `/agent NAME` | Select a custom AGY agent for future prompts. |
+| `/changelog` | Show AGY CLI release notes. |
+| `/plugins` | List imported AGY plugins. |
+| `/cli-help` | Show the installed `agy --help` output. |
+| `/version` | Show the installed AGY CLI version. |
+| `/agy ARGS...` | Run any non-interactive AGY command or subcommand using direct argv. |
+| `/agy-confirm` | Confirm a pending plugin, update, install, or permission-changing command. |
+| `/project ID\|clear` | Set or clear the per-chat `--project` value. |
+| `/add-dir PATH\|clear` | Add a directory for future prompts, or clear the list. |
+| `/output-format FORMAT` | Set `text`, `json`, or `stream-json` for future prompts. |
+| `/json-schema VALUE\|clear` | Set or clear `--json-schema`. |
+| `/log-file PATH\|clear` | Set or clear `--log-file`. |
+| `/print-timeout VALUE\|clear` | Set or clear `--print-timeout`. |
+| `/continue on\|off` | Toggle `--continue` for future prompts. |
+| `/new-project on\|off` | Toggle `--new-project` for future prompts. |
+| `/disable-slash-commands on\|off` | Toggle `--disable-slash-commands` for future prompts. |
 
-Any other text is treated as an AGY prompt. The bot does not accept arbitrary
-filesystem paths as commands; the process working directory is always fixed
-by `AGY_WORKSPACE`.
+Any other text is treated as an AGY prompt. `/agy` accepts the complete
+non-interactive flag surface shown by `agy --help`, including repeatable
+`--add-dir`, `--agent`, `--continue`, `--conversation`, `--mode`, `--model`,
+`--effort`, `--json-schema`, `--log-file`, `--new-project`, `--output-format`,
+`--print-timeout`, `--project`, `--sandbox`, and the `--print`/`--prompt`
+aliases. Arguments are passed directly to AGY and never through a shell.
+The process working directory remains fixed by `AGY_WORKSPACE`.
+
+The full control panel is available from `/menu`. The persistent keyboard next
+to the input intentionally contains only `Plan` and the current `Mode` button;
+model, effort, sandbox, session, usage, and AGY CLI information are available
+through the inline menu and slash commands.
+
+The inline menu exposes common flags and plugin actions; the custom command
+panel covers the complete CLI surface. `--prompt-interactive` is reported but
+rejected because it requires a local TTY. Plugin installation/removal, CLI
+update, `agy install`, and `--dangerously-skip-permissions` require a second
+`/agy-confirm` message. The permission bypass flag is disabled unless
+`AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS=1` is explicitly configured, and the
+gateway preserves the configured sandbox policy for normal `/agy --print`
+commands.
 
 ## Configuration
 
@@ -213,6 +251,8 @@ following variables are supported:
 | `AGY_ALLOW_SANDBOX_DISABLE` | `0` | Permit users to turn off the sandbox. Keep disabled unless deliberate. |
 | `AGY_MODEL` | Empty | Default model. Empty uses AGY's default model. |
 | `AGY_EFFORT` | `high` | Default reasoning effort: `low`, `medium`, or `high`. |
+| `AGY_AGENT` | Empty | Optional default custom agent passed as `--agent`. |
+| `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` | `0` | Permit the dangerous permission flag after explicit Telegram confirmation. Keep disabled. |
 | `AGY_ALLOWED_MODELS` | All known models | Comma-separated allowlist used by `/models` and `/model`. |
 | `AGY_TIMEOUT_MS` | `1800000` | Maximum AGY runtime in milliseconds. |
 | `AGY_MAX_OUTPUT_BYTES` | `20000000` | Maximum captured AGY output. |
