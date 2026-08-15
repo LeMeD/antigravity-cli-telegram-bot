@@ -94,8 +94,9 @@ export function validateCustomArgs(args: string[]): string | null {
 }
 
 /** Runs a read-only AGY CLI command such as `models` or `changelog`. */
-export function runAgyCommand(config: AgyConfig, commandArgs: string[], timeoutMs = 60_000): Promise<string> {
+export function runAgyCommand(config: AgyConfig, commandArgs: string[], timeoutMs = 60_000, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("AGY command cancelled"));
     const child = spawn(config.bin, commandArgs, {
       cwd: config.workspace,
       env: (() => {
@@ -107,28 +108,41 @@ export function runAgyCommand(config: AgyConfig, commandArgs: string[], timeoutM
         } = process.env;
         return { ...safeEnvironment, NO_COLOR: "1", TERM: "dumb" };
       })(),
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let stopping = false;
+    const stop = (): void => {
+      if (stopping || !child.pid) return;
+      stopping = true;
+      try { process.kill(-child.pid, "SIGTERM"); } catch { try { child.kill("SIGTERM"); } catch { /* already exited */ } }
+      setTimeout(() => {
+        try { process.kill(-child.pid!, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* already exited */ } }
+      }, 5000).unref();
+    };
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      child.kill("SIGTERM");
+      stop();
       reject(new Error(`AGY command timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     const finish = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       callback();
     };
+    const abort = (): void => { stop(); finish(() => reject(new Error("AGY command cancelled"))); };
+    signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
       if (stdout.length > config.maxOutputBytes) {
         finish(() => {
-          child.kill("SIGTERM");
+          stop();
           reject(new Error(`AGY command output exceeded ${config.maxOutputBytes} bytes`));
         });
       }

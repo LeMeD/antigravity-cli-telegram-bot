@@ -79,6 +79,14 @@ test("returns successful stderr output for CLIs that print help there", async ()
   assert.equal(output, "Usage: agy --help");
 });
 
+test("cancels a running custom AGY command and its process group", async () => {
+  const controller = new AbortController();
+  const running = runAgyCommand({ ...config, bin: process.execPath }, ["-e", "setTimeout(() => {}, 60000)"], 60000, controller.signal);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  controller.abort();
+  await assert.rejects(running, /AGY command cancelled/);
+});
+
 test("extracts nested final response text from stream results", () => {
   const parsed = parseStreamOutput(JSON.stringify({ event: "result", result: { result: { final_output: "nested answer" }, status: "SUCCESS" } }));
   assert.equal(parsed.text, "nested answer");

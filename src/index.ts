@@ -496,11 +496,15 @@ async function runCustomAgy(chatId: ChatId, args: string[], confirmed = false): 
   const executionArgs = customArgsForExecution(args);
   pendingDangerousCommands.delete(String(chatId));
   await reply(chatId, `Running agy ${executionArgs.join(" ")}...`, createMainKeyboard(settingsFor(chatId)));
+  const controller = new AbortController();
+  controllers.set(String(chatId), controller);
   try {
-    const output = await runAgyCommand(config.agy, executionArgs, config.agy.timeoutMs);
+    const output = await runAgyCommand(config.agy, executionArgs, config.agy.timeoutMs, controller.signal);
     await reply(chatId, `AGY command result\n\n${output}`, createMainKeyboard(settingsFor(chatId)));
   } catch (error) {
-    await reply(chatId, `AGY command failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(chatId)));
+    if (!controller.signal.aborted) await reply(chatId, `AGY command failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(chatId)));
+  } finally {
+    if (controllers.get(String(chatId)) === controller) controllers.delete(String(chatId));
   }
 }
 
