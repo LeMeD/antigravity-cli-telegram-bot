@@ -1,6 +1,7 @@
 import type { ModelOption } from "./types.js";
 
 export const DEFAULT_MODELS: ModelOption[] = [
+  { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash (High)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash (Medium)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-low", label: "Gemini 3.6 Flash (Low)", maxContextWindow: 1_000_000 },

@@ -316,6 +316,8 @@ and models outside the configured model allowlist.
 
 The built-in model allowlist currently includes:
 
+- `gemini-3.7-flash-high`
+
 - `gemini-3.6-flash-high`
 - `gemini-3.6-flash-medium`
 - `gemini-3.6-flash-low`
