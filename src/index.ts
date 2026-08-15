@@ -756,7 +756,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 
     const parts = text.split(/\s+/);
     const command = parts[0] ? parts[0].toLowerCase().split("@")[0].replace(/_/g, "-") : "";
-    if (command === "/agy") { try { await runCustomAgy(message.chat.id, parseCommandArgs(text.slice(parts[0].length))); } catch (error) { await reply(message.chat.id, `Invalid /agy command: ${(error as Error).message}`, createMainKeyboard(settingsFor(message.chat.id))); } return; }
+    if (command === "/agy") { try { void runCustomAgy(message.chat.id, parseCommandArgs(text.slice(parts[0].length))); } catch (error) { await reply(message.chat.id, `Invalid /agy command: ${(error as Error).message}`, createMainKeyboard(settingsFor(message.chat.id))); } return; }
     if (command.startsWith("/") && await handleCommand(message, command, parts.slice(1))) return;
     const buttonText = text;
     if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
