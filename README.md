@@ -306,12 +306,12 @@ following variables are supported:
 | `AGY_PROJECT` | Empty | Optional AGY project identifier. |
 | `AGY_DB_PATH` | `~/.gemini/antigravity-cli/conversation_summaries.db` | Read-only AGY SQLite database used by `/resume`. |
 | `AGY_MODE` | `plan` | AGY mode: `plan` or `accept-edits`. |
-| `AGY_SANDBOX` | `1` | Enable AGY terminal restrictions by default. |
-| `AGY_ALLOW_SANDBOX_DISABLE` | `0` | Permit users to turn off the sandbox. Keep disabled unless deliberate. |
+| `AGY_SANDBOX` | `0` | Full-control default: disable AGY terminal restrictions. Set to `1` to enable the sandbox. |
+| `AGY_ALLOW_SANDBOX_DISABLE` | `1` | Permit users to toggle the sandbox from Telegram. |
 | `AGY_MODEL` | Empty | Default model. Empty uses AGY's default model. |
 | `AGY_EFFORT` | `high` | Default reasoning effort: `low`, `medium`, or `high`. |
 | `AGY_AGENT` | Empty | Optional default custom agent passed as `--agent`. |
-| `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` | `1` | Full-control mode: automatically approve AGY tool permissions for normal prompts. Keep the sandbox and service restrictions enabled. |
+| `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` | `1` | Full-control default: automatically approve AGY tool permissions for normal prompts. |
 | `AGY_ALLOWED_MODELS` | All known models | Comma-separated allowlist used by `/models` and `/model`. |
 | `AGY_TIMEOUT_MS` | `1800000` | Maximum AGY runtime in milliseconds. |
 | `AGY_MAX_OUTPUT_BYTES` | `20000000` | Maximum captured AGY output. |
@@ -419,10 +419,13 @@ an untrusted user. Keep all of the following controls enabled:
 - Run the service as a dedicated non-root Unix user.
 - Give AGY a dedicated, least-privilege workspace rather than `/root` or `/`.
 - Keep `AGY_MODE=plan` for unattended operation unless edits are explicitly intended.
-- Keep `AGY_SANDBOX=1` and `AGY_ALLOW_SANDBOX_DISABLE=0` by default.
-- Full-control mode may add `--dangerously-skip-permissions` automatically for
-  normal prompts; keep `AGY_SANDBOX=1`, the dedicated service user, and the
-  systemd workspace restrictions enabled.
+- This release defaults to full-control mode: `AGY_SANDBOX=0`,
+  `AGY_ALLOW_SANDBOX_DISABLE=1`, and
+  `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS=1`. Restrict
+  `TELEGRAM_ALLOWED_USER_IDS` to trusted users.
+- For a safer deployment, set `AGY_SANDBOX=1`,
+  `AGY_ALLOW_SANDBOX_DISABLE=0`, and
+  `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS=0`.
 - Store `/etc/agy-telegram.env` and the state file with mode `0600`.
 - Keep SSH keys, cloud credentials, AGY credentials, and unrelated repositories
   outside the AGY workspace.
