@@ -179,6 +179,18 @@ For a configured bot, run:
 agy-telegram
 ```
 
+If the Telegram settings are not configured, the command opens a setup wizard:
+
+```bash
+agy-telegram --setup
+```
+
+The wizard asks for the bot token and allowed Telegram user ID(s), then saves
+them to `~/.config/agy-telegram/.env` with mode `600`. Existing environment
+variables take precedence over the saved file. For systemd, use
+`EnvironmentFile` or configure `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_ALLOWED_USER_IDS` explicitly; systemd has no interactive terminal.
+
 For a production service, use the systemd instructions below. The package
 installs the executable at `/usr/bin/agy-telegram` when npm uses the default
 system prefix.

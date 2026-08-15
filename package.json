@@ -1,6 +1,6 @@
 {
   "name": "agy-telegram",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Connect the Antigravity CLI to Telegram through a secure, allowlisted bot gateway.",
   "keywords": [
     "telegram",

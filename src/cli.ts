@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createRequire } from "node:module";
+import { defaultEnvFile, loadEnvFile, runSetup } from "./setup.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { name: string; version: string };
@@ -17,12 +18,23 @@ Start the AGY Telegram gateway.
 
 Usage:
   agy-telegram
+  agy-telegram --setup
   agy-telegram --version
   agy-telegram --help
 
 Configure the gateway through environment variables. See the README for the
 complete configuration and deployment guide.`);
   process.exit(0);
+}
+
+const envFile = process.env.AGY_ENV_FILE || defaultEnvFile();
+const savedEnv = await loadEnvFile(envFile);
+for (const [key, value] of Object.entries(savedEnv)) {
+  if (process.env[key] === undefined) process.env[key] = value;
+}
+if (process.argv.includes("--setup") || !process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_ALLOWED_USER_IDS) {
+  const configured = await runSetup(process.env, envFile);
+  for (const [key, value] of Object.entries(configured)) process.env[key] = value;
 }
 
 await import("./index.js");
