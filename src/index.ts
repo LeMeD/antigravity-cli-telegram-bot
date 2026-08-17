@@ -764,7 +764,29 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function detectAndSendGeneratedImages(chatId: ChatId, result: AgyResult, conversationId?: string | null): Promise<void> {
+const sentImagePaths = new Set<string>();
+
+function didExecuteImageGeneration(result: AgyResult): boolean {
+  for (const event of result.events) {
+    const step = event.step_update as Record<string, unknown> | undefined;
+    const tool = step?.tool_info as Record<string, unknown> | undefined;
+    const toolName = String(tool?.name || tool?.tool_name || tool?.tool || "").toLowerCase();
+    if (toolName.includes("generate_image") || toolName.includes("image")) {
+      return true;
+    }
+  }
+  return /Generated image is saved at|!\[.*?\]\(file:\/\/\/.*?\.(?:png|jpg|jpeg|webp)\)/i.test(result.text);
+}
+
+async function detectAndSendGeneratedImages(
+  chatId: ChatId,
+  result: AgyResult,
+  conversationId: string | null | undefined,
+  jobStartedAt: number
+): Promise<void> {
+  // STRICT GUARD: If the AI never generated an image in this turn, do not scan or send anything!
+  if (!didExecuteImageGeneration(result)) return;
+
   const imagesToSend = new Set<string>();
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
@@ -772,27 +794,28 @@ async function detectAndSendGeneratedImages(chatId: ChatId, result: AgyResult, c
   const fileMatches = result.text.matchAll(/(?:file:\/\/|['"])((\/[^\s'")]+)\.(png|jpg|jpeg|webp))(?:\b|['"]|\))/gi);
   for (const match of fileMatches) {
     const fullPath = `${match[2]}.${match[3]}`;
-    if (await fileExists(fullPath)) {
+    if (!sentImagePaths.has(fullPath) && (await fileExists(fullPath))) {
       imagesToSend.add(fullPath);
     }
   }
 
-  // 2. Scan conversation artifact directory for images created/modified in recent minutes
+  // 2. Scan conversation artifact directory for images created ONLY DURING THIS JOB (mtime >= jobStartedAt - 1000)
   const convId = conversationId || result.conversationId;
   if (convId) {
     const homeDir = process.env.HOME || "/root";
     const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId);
     try {
       const entries = await fs.readdir(brainDir, { withFileTypes: true });
-      const now = Date.now();
       for (const entry of entries) {
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase();
           if (imageExtensions.has(ext)) {
             const filePath = path.join(brainDir, entry.name);
-            const stat = await fs.stat(filePath).catch(() => null);
-            if (stat && now - stat.mtimeMs < 15 * 60 * 1000) {
-              imagesToSend.add(filePath);
+            if (!sentImagePaths.has(filePath)) {
+              const stat = await fs.stat(filePath).catch(() => null);
+              if (stat && stat.mtimeMs >= jobStartedAt - 1000) {
+                imagesToSend.add(filePath);
+              }
             }
           }
         }
@@ -802,8 +825,9 @@ async function detectAndSendGeneratedImages(chatId: ChatId, result: AgyResult, c
     }
   }
 
-  // 3. Dispatch photos to Telegram chat
+  // 3. Dispatch photos to Telegram chat & mark as sent
   for (const imagePath of imagesToSend) {
+    sentImagePaths.add(imagePath);
     try {
       await telegram.sendChatAction(chatId, "upload_photo");
       const basename = path.basename(imagePath);
@@ -967,7 +991,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
 
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`);
-    await detectAndSendGeneratedImages(job.chatId, result, effectiveConvId);
+    await detectAndSendGeneratedImages(job.chatId, result, effectiveConvId, startedAt);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
