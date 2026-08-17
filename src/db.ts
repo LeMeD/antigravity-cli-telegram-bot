@@ -1,6 +1,27 @@
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationSummary } from "./types.js";
+
+export function resolveEffectiveDbPath(configuredPath?: string): string {
+  if (configuredPath && configuredPath.trim()) {
+    const trimmed = configuredPath.trim();
+    return trimmed.startsWith("~")
+      ? path.join(os.homedir() || process.env.HOME || "/root", trimmed.slice(trimmed === "~" ? 1 : 2))
+      : trimmed;
+  }
+  const candidates = [
+    path.join(os.homedir() || "/root", ".gemini/antigravity-cli/conversation_summaries.db"),
+    "/root/.gemini/antigravity-cli/conversation_summaries.db",
+    path.join(process.env.HOME || "/root", ".gemini/antigravity-cli/conversation_summaries.db"),
+    "/var/lib/agybot/.gemini/antigravity-cli/conversation_summaries.db",
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
 
 export interface ConversationPage {
   items: ConversationSummary[];
@@ -97,6 +118,87 @@ export class ConversationDatabase {
       return emptyResult;
     } finally {
       db?.close();
+    }
+  }
+
+  private ensureTable(db: DatabaseSync): void {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversation_id text PRIMARY KEY,
+        title text NOT NULL DEFAULT '',
+        preview text NOT NULL DEFAULT '',
+        step_count integer NOT NULL DEFAULT 0,
+        last_modified_time datetime NOT NULL,
+        workspace_uris text NOT NULL DEFAULT '',
+        status text NOT NULL DEFAULT '',
+        source text NOT NULL DEFAULT '',
+        project_id text NOT NULL DEFAULT '',
+        agent_name text NOT NULL DEFAULT '',
+        parent_conversation_id text NOT NULL DEFAULT '',
+        nesting_depth integer NOT NULL DEFAULT 0,
+        battle_id text NOT NULL DEFAULT '',
+        winning_conversation_id text NOT NULL DEFAULT '',
+        not_fully_idle numeric NOT NULL DEFAULT false,
+        killed numeric NOT NULL DEFAULT false,
+        last_user_input_time datetime NOT NULL DEFAULT '',
+        last_user_input_step_index integer NOT NULL DEFAULT -1,
+        app_data_dir text NOT NULL DEFAULT ''
+      );
+    `);
+  }
+
+  public upsertConversation(summary: {
+    conversation_id: string;
+    title?: string;
+    preview?: string;
+    step_count?: number;
+    last_modified_time?: string | number;
+    project_id?: string;
+    workspace_uris?: string;
+  }): void {
+    if (!summary.conversation_id || !isUuid(summary.conversation_id)) return;
+    try {
+      const dir = path.dirname(this.dbPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const db = new DatabaseSync(this.dbPath);
+      this.ensureTable(db);
+      const isoTime = typeof summary.last_modified_time === "number"
+        ? new Date(summary.last_modified_time).toISOString()
+        : (summary.last_modified_time || new Date().toISOString());
+      const preview = (summary.preview || summary.title || "").trim();
+      const title = (summary.title || "").trim();
+      const stepCount = summary.step_count && summary.step_count > 0 ? summary.step_count : 1;
+      const projectId = summary.project_id || "default-cli-project";
+      const workspaceUris = summary.workspace_uris || "";
+
+      const stmt = db.prepare(`
+        INSERT INTO conversation_summaries (
+          conversation_id, title, preview, step_count, last_modified_time, workspace_uris,
+          status, source, project_id, agent_name, parent_conversation_id, nesting_depth,
+          battle_id, winning_conversation_id, not_fully_idle, killed, last_user_input_time,
+          last_user_input_step_index, app_data_dir
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, '', 'telegram', ?, '', '', 0, '', '', 0, 0, ?, 0, 'antigravity-cli'
+        )
+        ON CONFLICT(conversation_id) DO UPDATE SET
+          preview = CASE WHEN excluded.preview != '' THEN excluded.preview ELSE conversation_summaries.preview END,
+          title = CASE WHEN excluded.title != '' THEN excluded.title ELSE conversation_summaries.title END,
+          step_count = CASE WHEN excluded.step_count > conversation_summaries.step_count THEN excluded.step_count ELSE conversation_summaries.step_count + excluded.step_count END,
+          last_modified_time = excluded.last_modified_time;
+      `);
+      stmt.run(
+        summary.conversation_id,
+        title,
+        preview,
+        stepCount,
+        isoTime,
+        workspaceUris,
+        projectId,
+        isoTime
+      );
+      db.close();
+    } catch {
+      // Ignore write errors gracefully
     }
   }
 

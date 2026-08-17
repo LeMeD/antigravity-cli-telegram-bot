@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { resolveEffectiveDbPath } from "./db.js";
 import { DEFAULT_MODELS } from "./models.js";
 import type { AppConfig } from "./types.js";
 
@@ -25,8 +26,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const allowedModels = modelsFrom(env);
   const model = (env.AGY_MODEL || "").trim();
   if (model && !allowedModels.includes(model)) throw new Error(`AGY_MODEL is not in AGY_ALLOWED_MODELS: ${model}`);
-  const defaultDbPath = path.join(os.homedir() || process.env.HOME || "/var/lib/agybot", ".gemini/antigravity-cli/conversation_summaries.db");
-  const dbPath = resolvePath(env.AGY_DB_PATH || defaultDbPath);
+  const dbPath = resolveEffectiveDbPath(env.AGY_DB_PATH);
   return {
     telegram: {
       token, allowedUserIds, allowedChatIds: numericCsvFrom(env, "TELEGRAM_ALLOWED_CHAT_IDS"),

@@ -11,7 +11,7 @@ import { getModelMaxContext, modelLabel, renderContextProgressBar } from "./mode
 import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
-import { formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml, TelegramClient } from "./telegram.js";
+import { escapeHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml, TelegramClient } from "./telegram.js";
 import type { AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
@@ -181,7 +181,7 @@ function resumeMessageText(pageData: ConversationPage): string {
   const list = pageData.items
     .map((item) => {
       const time = formatRelativeTime(item.last_modified_time);
-      return `<b>${item.display_title}</b>\n${item.step_count} steps · ${time}`;
+      return `<b>${escapeHtml(item.display_title)}</b>\n${item.step_count} steps · ${time}`;
     })
     .join("\n\n");
   return `<b>AGY Sessions</b>\nPage ${pageData.page + 1}/${pageData.totalPages}\n\n${list}`;
@@ -192,7 +192,11 @@ async function showResumeMenu(chatId: ChatId, page = 0, messageId?: number): Pro
   const text = resumeMessageText(pageData);
   const keyboard = resumeKeyboard(pageData.page, pageData.totalPages, pageData.items);
   if (messageId) {
-    await telegram.editMessageText(chatId, messageId, text, keyboard, "HTML");
+    try {
+      await telegram.editMessageText(chatId, messageId, text, keyboard, "HTML");
+    } catch {
+      await telegram.editMessageText(chatId, messageId, text.replace(/<[^>]+>/g, ""), keyboard).catch(() => undefined);
+    }
   } else {
     await replyWithHtml(chatId, text, keyboard);
   }
@@ -384,13 +388,22 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<void> {
       updatedAt: new Date().toISOString(),
     });
     const relativeTime = formatRelativeTime(summary.last_modified_time);
-    await telegram.editMessageText(
-      chatId,
-      messageId,
-      `Session switched.\n\n<b>${summary.display_title}</b>\n${summary.step_count} steps · last used ${relativeTime}\n\nFuture prompts will continue this conversation.`,
-      { inline_keyboard: [] },
-      "HTML"
-    );
+    try {
+      await telegram.editMessageText(
+        chatId,
+        messageId,
+        `Session switched.\n\n<b>${escapeHtml(summary.display_title)}</b>\n${summary.step_count} steps · last used ${relativeTime}\n\nFuture prompts will continue this conversation.`,
+        { inline_keyboard: [] },
+        "HTML"
+      );
+    } catch {
+      await telegram.editMessageText(
+        chatId,
+        messageId,
+        `Session switched.\n\n${summary.display_title}\n${summary.step_count} steps · last used ${relativeTime}\n\nFuture prompts will continue this conversation.`,
+        { inline_keyboard: [] }
+      ).catch(() => undefined);
+    }
     await telegram.sendMessage(chatId, "Controls ready.", createMainKeyboard(settings));
     return;
   }
@@ -497,14 +510,14 @@ async function runCustomAgy(chatId: ChatId, args: string[], confirmed = false): 
   pendingDangerousCommands.delete(String(chatId));
   await reply(chatId, `Running agy ${executionArgs.join(" ")}...`, createMainKeyboard(settingsFor(chatId)));
   const controller = new AbortController();
-  controllers.set(String(chatId), controller);
+  controllers.set(`custom:${chatId}`, controller);
   try {
     const output = await runAgyCommand(config.agy, executionArgs, config.agy.timeoutMs, controller.signal);
     await reply(chatId, `AGY command result\n\n${output}`, createMainKeyboard(settingsFor(chatId)));
   } catch (error) {
     if (!controller.signal.aborted) await reply(chatId, `AGY command failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(chatId)));
   } finally {
-    if (controllers.get(String(chatId)) === controller) controllers.delete(String(chatId));
+    if (controllers.get(`custom:${chatId}`) === controller) controllers.delete(`custom:${chatId}`);
   }
 }
 
@@ -526,6 +539,175 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
   const chatId = message.chat.id;
   if (["/start", "/menu"].includes(command)) { await showMain(chatId); return true; }
   if (command === "/help") { await showMain(chatId); await cliOutput(chatId, await telegram.sendMessage(chatId, "Loading AGY CLI help...") .then((result) => result.message_id), "help"); return true; }
+  if (command === "/new") {
+    await state.resetSession(chatId);
+    await reply(chatId, "New AGY conversation started.", createMainKeyboard(settingsFor(chatId)));
+    return true;
+  }
+  if (command === "/models" || command === "/model") {
+    if (!args[0] || args[0].toLowerCase() === "list") {
+      await reply(chatId, "Select a model:", modelKeyboard(chatId, 0));
+      return true;
+    }
+    const targetModel = args[0].trim();
+    if (config.agy.allowedModels.includes(targetModel)) {
+      const settings = settingsFor(chatId);
+      settings.model = targetModel;
+      await saveSettings(chatId, settings);
+      await reply(chatId, `Model set to ${modelLabel(targetModel)}.`, createMainKeyboard(settings));
+    } else {
+      await reply(chatId, `Unknown model: ${targetModel}\nAllowed: ${config.agy.allowedModels.join(", ")}`, modelKeyboard(chatId, 0));
+    }
+    return true;
+  }
+  if (command === "/effort") {
+    if (!args[0]) {
+      await reply(chatId, "Select reasoning effort:", effortKeyboard(chatId));
+      return true;
+    }
+    const targetEffort = args[0].toLowerCase().trim();
+    if (isEffort(targetEffort)) {
+      const settings = settingsFor(chatId);
+      settings.effort = targetEffort;
+      await saveSettings(chatId, settings);
+      await reply(chatId, `Effort set to ${targetEffort}.`, createMainKeyboard(settings));
+    } else {
+      await reply(chatId, `Invalid effort: ${targetEffort}. Choose: low, medium, high.`, effortKeyboard(chatId));
+    }
+    return true;
+  }
+  if (command === "/mode") {
+    if (!args[0]) {
+      await reply(chatId, "Select execution mode:", modeKeyboard(chatId));
+      return true;
+    }
+    const targetMode = args[0].toLowerCase().trim();
+    if (isMode(targetMode)) {
+      const settings = settingsFor(chatId);
+      settings.mode = targetMode;
+      await saveSettings(chatId, settings);
+      await reply(chatId, `Mode set to ${targetMode}.`, createMainKeyboard(settings));
+    } else {
+      await reply(chatId, `Invalid mode: ${targetMode}. Choose: plan, accept-edits.`, modeKeyboard(chatId));
+    }
+    return true;
+  }
+  if (command === "/sandbox") {
+    if (!args[0]) {
+      await reply(chatId, `Sandbox is ${settingsFor(chatId).sandbox ? "enabled" : "disabled"}.`, sandboxKeyboard(chatId));
+      return true;
+    }
+    const val = args[0].toLowerCase().trim();
+    if (["on", "off"].includes(val)) {
+      const enable = val === "on";
+      if (!enable && !config.agy.allowSandboxDisable && config.agy.sandbox) {
+        await reply(chatId, "Sandbox disabling is locked by server configuration.", createMainKeyboard(settingsFor(chatId)));
+        return true;
+      }
+      const settings = settingsFor(chatId);
+      settings.sandbox = enable;
+      await saveSettings(chatId, settings);
+      await reply(chatId, `Sandbox ${enable ? "enabled" : "disabled"}.`, createMainKeyboard(settings));
+    } else {
+      await reply(chatId, "Use /sandbox on|off.", sandboxKeyboard(chatId));
+    }
+    return true;
+  }
+  if (command === "/agent") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      await reply(chatId, `Current agent: ${settings.agent || "default"}\n\nUse: /agent NAME or /agent clear\nList agents: /agents`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    settings.agent = target.toLowerCase() === "clear" || target.toLowerCase() === "default" ? null : target;
+    await saveSettings(chatId, settings);
+    await reply(chatId, `Agent set to: ${settings.agent || "default"}.`, createMainKeyboard(settings));
+    return true;
+  }
+  if (command === "/project") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      await reply(chatId, `Current project: ${settings.project || "default"}\n\nUse: /project ID or /project clear`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    settings.project = target.toLowerCase() === "clear" || target.toLowerCase() === "default" ? null : target;
+    await saveSettings(chatId, settings);
+    await reply(chatId, `Project set to: ${settings.project || "default"}.`, createMainKeyboard(settings));
+    return true;
+  }
+  if (command === "/add-dir") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      const dirs = settings.addDirs?.length ? settings.addDirs.join("\n") : "(none)";
+      await reply(chatId, `Additional workspace directories:\n${dirs}\n\nUse: /add_dir PATH or /add_dir clear`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    if (target.toLowerCase() === "clear") {
+      settings.addDirs = [];
+      await saveSettings(chatId, settings);
+      await reply(chatId, "Additional directories cleared.", createMainKeyboard(settings));
+      return true;
+    }
+    settings.addDirs = Array.from(new Set([...(settings.addDirs || []), target]));
+    await saveSettings(chatId, settings);
+    await reply(chatId, `Added directory: ${target}\nTotal dirs: ${settings.addDirs.length}`, createMainKeyboard(settings));
+    return true;
+  }
+  if (command === "/output-format") {
+    if (!args[0]) {
+      await reply(chatId, "Select the output format:", outputFormatKeyboard(chatId));
+      return true;
+    }
+    const target = args[0].toLowerCase().trim();
+    if (isOutputFormat(target)) {
+      const settings = settingsFor(chatId);
+      settings.outputFormat = target;
+      await saveSettings(chatId, settings);
+      await reply(chatId, `Output format set to ${target}.`, createMainKeyboard(settings));
+    } else {
+      await reply(chatId, "Invalid format. Choose: text, json, stream-json.", outputFormatKeyboard(chatId));
+    }
+    return true;
+  }
+  if (command === "/json-schema") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      await reply(chatId, `Current JSON schema: ${settings.jsonSchema || "none"}\n\nUse: /json_schema JSON_OR_PATH or /json_schema clear`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    settings.jsonSchema = target.toLowerCase() === "clear" ? null : target;
+    await saveSettings(chatId, settings);
+    await reply(chatId, `JSON schema ${settings.jsonSchema ? "updated" : "cleared"}.`, createMainKeyboard(settings));
+    return true;
+  }
+  if (command === "/log-file") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      await reply(chatId, `Current log file: ${settings.logFile || "none"}\n\nUse: /log_file PATH or /log_file clear`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    settings.logFile = target.toLowerCase() === "clear" ? null : target;
+    await saveSettings(chatId, settings);
+    await reply(chatId, `Log file ${settings.logFile ? "set to " + settings.logFile : "cleared"}.`, createMainKeyboard(settings));
+    return true;
+  }
+  if (command === "/print-timeout") {
+    const settings = settingsFor(chatId);
+    if (!args[0]) {
+      await reply(chatId, `Current print timeout: ${settings.printTimeout || "default"}\n\nUse: /print_timeout 10m or /print_timeout clear`, createMainKeyboard(settings));
+      return true;
+    }
+    const target = args.join(" ").trim();
+    settings.printTimeout = target.toLowerCase() === "clear" ? null : target;
+    await saveSettings(chatId, settings);
+    await reply(chatId, `Print timeout ${settings.printTimeout ? "set to " + settings.printTimeout : "reset to default"}.`, createMainKeyboard(settings));
+    return true;
+  }
   if (command === "/resume" || command === "/sessions") { await showResumeMenu(chatId, args[0] ? Math.max(0, Number(args[0]) - 1) : 0); return true; }
   if (command === "/continue") {
     if (!args[0] || args[0].toLowerCase() === "list") {
@@ -568,7 +750,7 @@ function addUsage(previous: Usage | null | undefined, current: Usage | null): Us
 
 async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<void> {
   const controller = new AbortController();
-  controllers.set(String(job.chatId), controller);
+  controllers.set(`prompt:${job.chatId}`, controller);
   let progressMessage: { message_id: number } | null = null;
   let lastProgressAt = 0;
   let progressUpdate = Promise.resolve();
@@ -590,7 +772,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
         await reply(job.chatId, `Could not read AGY quota: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
       }
     } finally {
-      controllers.delete(String(job.chatId));
+      controllers.delete(`prompt:${job.chatId}`);
     }
     return;
   }
@@ -611,7 +793,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
         await reply(job.chatId, `Could not read AGY credits: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
       }
     } finally {
-      controllers.delete(String(job.chatId));
+      controllers.delete(`prompt:${job.chatId}`);
     }
     return;
   }
@@ -637,7 +819,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
         await reply(job.chatId, `Could not read Active Context: ${errorMsg}`, createMainKeyboard(settingsFor(job.chatId)));
       }
     } finally {
-      controllers.delete(String(job.chatId));
+      controllers.delete(`prompt:${job.chatId}`);
     }
     return;
   }
@@ -674,16 +856,34 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     if (isCancelled()) return;
     const latestSession = state.session(job.chatId);
     const lastRun = { model: result.model || settings.model, usage: result.usage, durationMs: result.durationMs, numTurns: result.numTurns, toolCalls: result.toolCalls, status: result.status || "SUCCESS", completedAt: new Date().toISOString() };
+    const effectiveConvId = result.conversationId || session?.conversationId;
+    const initialTitle = (job.prompt ? job.prompt.replace(/\s+/g, " ").slice(0, 60).trim() : "") || "Conversation";
+    const convTitle = latestSession?.conversationTitle || initialTitle;
+    const stepCount = (latestSession?.conversationStepCount || 0) + (result.numTurns || 1);
+
     await state.setSession(job.chatId, {
       ...(result.conversationId ? { conversationId: result.conversationId } : {}),
-      conversationTitle: latestSession?.conversationTitle,
-      conversationStepCount: (latestSession?.conversationStepCount || 0) + (result.numTurns || 1),
+      conversationTitle: convTitle,
+      conversationStepCount: stepCount,
       conversationLastModifiedAt: Date.now(),
       settings: latestSession?.settings || settings,
       lastRun,
       usageTotals: addUsage(latestSession?.usageTotals, result.usage),
       updatedAt: new Date().toISOString(),
     });
+
+    if (effectiveConvId) {
+      convDb.upsertConversation({
+        conversation_id: effectiveConvId,
+        preview: convTitle,
+        title: convTitle,
+        step_count: stepCount,
+        last_modified_time: Date.now(),
+        project_id: settings.project || "default-cli-project",
+        workspace_uris: `["file://${config.agy.workspace}"]`,
+      });
+    }
+
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
@@ -691,7 +891,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
   } catch (error) {
     if (!isCancelled()) { if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined); await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId))); }
   } finally {
-    controllers.delete(String(job.chatId));
+    controllers.delete(`prompt:${job.chatId}`);
     if (job.imagePath) {
       await fs.unlink(job.imagePath).catch(() => undefined);
     }
@@ -700,7 +900,12 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
 
 const queue = new JobQueue(config.queue.maxSize, processJob);
 const originalCancel = queue.cancelForChat.bind(queue);
-queue.cancelForChat = (chatId: ChatId) => { const result = originalCancel(chatId); controllers.get(String(chatId))?.abort(); return result; };
+queue.cancelForChat = (chatId: ChatId) => {
+  const result = originalCancel(chatId);
+  controllers.get(`prompt:${chatId}`)?.abort();
+  controllers.get(`custom:${chatId}`)?.abort();
+  return result;
+};
 
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
   try {

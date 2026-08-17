@@ -121,3 +121,44 @@ test("ConversationDatabase queries, paginates, and filters killed/0-step convers
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test("ConversationDatabase upsertConversation correctly inserts and updates sessions", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-test-upsert-"));
+  const dbFile = path.join(tmpDir, "conversation_summaries.db");
+
+  const convDb = new ConversationDatabase(dbFile);
+  const testId = "123e4567-e89b-12d3-a456-426614174000";
+
+  // Upsert new conversation
+  convDb.upsertConversation({
+    conversation_id: testId,
+    preview: "Initial Test Prompt",
+    title: "Initial Test Prompt",
+    step_count: 2,
+    last_modified_time: Date.now(),
+    project_id: "test-proj",
+  });
+
+  const row1 = convDb.getConversationById(testId);
+  assert.ok(row1);
+  assert.equal(row1.conversation_id, testId);
+  assert.equal(row1.display_title, "Initial Test Prompt");
+  assert.equal(row1.step_count, 2);
+
+  // Update existing conversation
+  convDb.upsertConversation({
+    conversation_id: testId,
+    preview: "Updated Test Prompt",
+    title: "Updated Test Prompt",
+    step_count: 5,
+    last_modified_time: Date.now(),
+    project_id: "test-proj",
+  });
+
+  const row2 = convDb.getConversationById(testId);
+  assert.ok(row2);
+  assert.equal(row2.display_title, "Updated Test Prompt");
+  assert.equal(row2.step_count, 5);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

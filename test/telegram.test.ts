@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatTelegramHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml } from "../src/telegram.js";
+import { escapeHtml, formatTelegramHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml } from "../src/telegram.js";
 import { createMainKeyboard } from "../src/keyboards.js";
 
 test("splitPreformattedHtml preserves HTML tags without double escaping", () => {
@@ -52,4 +52,9 @@ test("does not break a large code block when chunking", () => {
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every((chunk) => chunk.length <= 300));
   assert.ok(chunks.every((chunk) => chunk.startsWith("<pre><code") && chunk.endsWith("</code></pre>")));
+});
+
+test("escapeHtml properly escapes reserved HTML characters", () => {
+  assert.equal(escapeHtml("<script>alert('xss') & test</script>"), "&lt;script&gt;alert('xss') &amp; test&lt;/script&gt;");
+  assert.equal(escapeHtml('Audit <Repo> & "Deploy"'), "Audit &lt;Repo&gt; &amp; &quot;Deploy&quot;");
 });

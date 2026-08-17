@@ -269,9 +269,12 @@ export function runAgy(config: AgyConfig, prompt: string, conversationId: string
       for (const entry of readdirSync("/proc", { withFileTypes: true })) {
         if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
         try {
-          const fields = readFileSync(`/proc/${entry.name}/stat`, "utf8").split(" ");
+          const stat = readFileSync(`/proc/${entry.name}/stat`, "utf8");
+          const closingParen = stat.lastIndexOf(")");
+          if (closingParen < 0) continue;
+          const fields = stat.slice(closingParen + 2).split(" ");
           const pid = Number(entry.name);
-          const parentPid = Number(fields[3]);
+          const parentPid = Number(fields[1]);
           if (Number.isSafeInteger(pid) && Number.isSafeInteger(parentPid)) {
             const list = children.get(parentPid) || [];
             list.push(pid);

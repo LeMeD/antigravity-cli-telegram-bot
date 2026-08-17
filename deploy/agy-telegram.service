@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=agybot
-Group=agybot
-WorkingDirectory=/var/lib/agybot
+User=root
+Group=root
+WorkingDirectory=/opt/hermes-workspace/antigravity-cli-telegram-bot
 EnvironmentFile=/etc/agy-telegram.env
-Environment=HOME=/var/lib/agybot
-ExecStart=/usr/bin/agy-telegram
+Environment=HOME=/root
+ExecStart=/usr/bin/node /opt/hermes-workspace/antigravity-cli-telegram-bot/dist/cli.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -20,13 +20,9 @@ CPUQuota=100%
 MemoryMax=1536M
 TasksMax=512
 
-# Basic service hardening. ReadWritePaths must include AGY caches if the
-# authenticated service user needs them; review before deployment.
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/agybot /var/lib/agy-telegram /srv/agy-workspaces
+# Full-control mode: AGY must be able to write the workspace and use its
+# configured tools without systemd filesystem restrictions.
+PrivateTmp=false
 
 [Install]
 WantedBy=multi-user.target
