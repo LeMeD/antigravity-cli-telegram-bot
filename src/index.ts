@@ -896,6 +896,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     };
     const result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
       ...settings,
+      signal: controller.signal,
       imagePath: job.imagePath,
       documentPath: job.documentPath,
       documentName: job.documentName,
@@ -949,7 +950,12 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
-    if (!isCancelled()) { if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined); await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId))); }
+    if (isCancelled() || controller.signal.aborted || (error instanceof Error && error.message.includes("cancelled"))) {
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "⛔ Permintaan berhasil dibatalkan.").catch(() => undefined);
+    } else {
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined);
+      await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId)));
+    }
   } finally {
     controllers.delete(`prompt:${job.chatId}`);
     if (job.imagePath) {

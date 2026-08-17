@@ -304,7 +304,7 @@ export function runAgy(config: AgyConfig, prompt: string, conversationId: string
         for (const pid of descendants) {
           try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
         }
-      }, 5000).unref();
+      }, 500).unref();
     };
     const abort = (): void => { stop(); finish(reject as (value: never) => void, new Error("AGY job cancelled") as never); };
     const timer = setTimeout(() => { timedOut = true; stop(); }, config.timeoutMs);
