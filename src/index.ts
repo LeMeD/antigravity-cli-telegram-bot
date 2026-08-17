@@ -12,7 +12,7 @@ import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
 import { escapeHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml, TelegramClient } from "./telegram.js";
-import type { AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
+import type { AgyResult, AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
 const state = new StateStore(config.stateFile);
@@ -748,6 +748,65 @@ function addUsage(previous: Usage | null | undefined, current: Usage | null): Us
   return total;
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function detectAndSendGeneratedImages(chatId: ChatId, result: AgyResult, conversationId?: string | null): Promise<void> {
+  const imagesToSend = new Set<string>();
+  const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+
+  // 1. Extract markdown image / file links from result.text: ![caption](file:///path/to/image.png) or file:///path/to/image.png
+  const fileMatches = result.text.matchAll(/(?:file:\/\/|['"])((\/[^\s'")]+)\.(png|jpg|jpeg|webp))(?:\b|['"]|\))/gi);
+  for (const match of fileMatches) {
+    const fullPath = `${match[2]}.${match[3]}`;
+    if (await fileExists(fullPath)) {
+      imagesToSend.add(fullPath);
+    }
+  }
+
+  // 2. Scan conversation artifact directory for images created/modified in recent minutes
+  const convId = conversationId || result.conversationId;
+  if (convId) {
+    const homeDir = process.env.HOME || "/root";
+    const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId);
+    try {
+      const entries = await fs.readdir(brainDir, { withFileTypes: true });
+      const now = Date.now();
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (imageExtensions.has(ext)) {
+            const filePath = path.join(brainDir, entry.name);
+            const stat = await fs.stat(filePath).catch(() => null);
+            if (stat && now - stat.mtimeMs < 15 * 60 * 1000) {
+              imagesToSend.add(filePath);
+            }
+          }
+        }
+      }
+    } catch {
+      // directory might not exist yet
+    }
+  }
+
+  // 3. Dispatch photos to Telegram chat
+  for (const imagePath of imagesToSend) {
+    try {
+      await telegram.sendChatAction(chatId, "upload_photo");
+      const basename = path.basename(imagePath);
+      await telegram.sendPhoto(chatId, imagePath, `🎨 Generated Image: ${basename}`);
+    } catch (error) {
+      console.error(`Failed to send generated image (${imagePath}):`, error);
+    }
+  }
+}
+
 async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<void> {
   const controller = new AbortController();
   controllers.set(`prompt:${job.chatId}`, controller);
@@ -886,6 +945,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
 
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`);
+    await detectAndSendGeneratedImages(job.chatId, result, effectiveConvId);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
