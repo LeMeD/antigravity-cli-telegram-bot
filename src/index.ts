@@ -741,7 +741,7 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
     controllers.get(`prompt:${chatId}`)?.abort();
     controllers.get(`custom:${chatId}`)?.abort();
     const result = queue.cancelForChat(chatId);
-    await reply(chatId, `⛔ Permintaan & proses AGY berhasil dibatalkan dan dimatikan seketika.\nAntrean dibersihkan: ${result.removed} antrean.`, createMainKeyboard(settingsFor(chatId)));
+    await reply(chatId, `⛔ Cancelled: ${result.removed} queued job(s) removed, active AGY process terminated.`, createMainKeyboard(settingsFor(chatId)));
     return true;
   }
   if (command === "/agy-confirm") { const pending = pendingDangerousCommands.get(String(chatId)); if (!pending) await reply(chatId, "There is no pending dangerous AGY command.", createMainKeyboard(settingsFor(chatId))); else await runCustomAgy(chatId, pending, true); return true; }
@@ -933,7 +933,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
       const idleSec = Math.floor((Date.now() - lastEventReceivedAt) / 1000);
       if (idleSec >= 3 && !responseDraft.trim()) {
-        updateProgress(`${lastStepText}\nModel: ${modelLabel(settings.model)}\n⏱️ Waktu berjalan: ${elapsedSec}s (sedang diproses...)`);
+        updateProgress(`${lastStepText}\nModel: ${modelLabel(settings.model)}\n⏱️ Elapsed: ${elapsedSec}s (working...)`);
       }
     }, 2500);
 
@@ -996,7 +996,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
     if (isCancelled() || controller.signal.aborted || (error instanceof Error && error.message.includes("cancelled"))) {
-      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "⛔ Permintaan berhasil dibatalkan.").catch(() => undefined);
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "⛔ Request cancelled by user.").catch(() => undefined);
     } else {
       if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined);
       await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId)));
