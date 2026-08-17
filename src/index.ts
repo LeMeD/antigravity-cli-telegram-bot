@@ -736,7 +736,14 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
   if (command === "/context") { enqueueJob(chatId, { kind: "context" }); return true; }
   if (command === "/tokens") { await reply(chatId, usageReport(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/status") { const status = queue.statusForChat(chatId); await reply(chatId, `Status: ${status.active ? `running (${status.active.id})` : "idle"}\nQueued for this chat: ${status.queued}\nTotal queued: ${status.totalQueued}`, createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/cancel") { pendingDangerousCommands.delete(String(chatId)); const result = queue.cancelForChat(chatId); await reply(chatId, `Cancelled: ${result.removed} queued, active=${result.activeCancelled ? "yes" : "no"}.`, createMainKeyboard(settingsFor(chatId))); return true; }
+  if (command === "/cancel" || command === "/kill") {
+    pendingDangerousCommands.delete(String(chatId));
+    controllers.get(`prompt:${chatId}`)?.abort();
+    controllers.get(`custom:${chatId}`)?.abort();
+    const result = queue.cancelForChat(chatId);
+    await reply(chatId, `⛔ Permintaan & proses AGY berhasil dibatalkan dan dimatikan seketika.\nAntrean dibersihkan: ${result.removed} antrean.`, createMainKeyboard(settingsFor(chatId)));
+    return true;
+  }
   if (command === "/agy-confirm") { const pending = pendingDangerousCommands.get(String(chatId)); if (!pending) await reply(chatId, "There is no pending dangerous AGY command.", createMainKeyboard(settingsFor(chatId))); else await runCustomAgy(chatId, pending, true); return true; }
   return false;
 }
@@ -883,6 +890,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     return;
   }
 
+  let heartbeatTimer: NodeJS.Timeout | undefined;
   try {
     await telegram.sendChatAction(job.chatId);
     const session = state.session(job.chatId);
@@ -894,6 +902,17 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       lastProgressAt = Date.now();
       progressUpdate = progressUpdate.then(() => telegram.editMessageText(job.chatId, progressMessage!.message_id, text)).catch(() => undefined);
     };
+    let lastStepText = "AGY is starting...";
+    let lastEventReceivedAt = Date.now();
+    heartbeatTimer = setInterval(() => {
+      if (isCancelled() || controller.signal.aborted) return;
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      const idleSec = Math.floor((Date.now() - lastEventReceivedAt) / 1000);
+      if (idleSec >= 3 && !responseDraft.trim()) {
+        updateProgress(`${lastStepText}\nModel: ${modelLabel(settings.model)}\n⏱️ Waktu berjalan: ${elapsedSec}s (sedang diproses...)`);
+      }
+    }, 2500);
+
     const result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
       ...settings,
       signal: controller.signal,
@@ -901,10 +920,12 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       documentPath: job.documentPath,
       documentName: job.documentName,
       onEvent: (event: StreamEvent) => {
+        lastEventReceivedAt = Date.now();
         const step = event.step_update as Record<string, unknown> | undefined;
         const textDelta = typeof step?.text_delta === "string" ? step.text_delta : "";
         if (textDelta) responseDraft += textDelta;
         const update = formatStepUpdate(step);
+        if (update) lastStepText = update;
         if (responseDraft.trim()) {
           const draft = responseDraft.length > 3000 ? `...${responseDraft.slice(-3000)}` : responseDraft;
           updateProgress(`AGY is responding...\nModel: ${modelLabel(settings.model)}\n\n${draft}`);
@@ -957,6 +978,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId)));
     }
   } finally {
+    clearInterval(heartbeatTimer);
     controllers.delete(`prompt:${job.chatId}`);
     if (job.imagePath) {
       await fs.unlink(job.imagePath).catch(() => undefined);

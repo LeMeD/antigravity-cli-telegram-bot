@@ -292,21 +292,26 @@ export function runAgy(config: AgyConfig, prompt: string, conversationId: string
       visit(rootPid);
       return result.reverse();
     };
-    const stop = (): void => {
+    const stop = (immediate = false): void => {
       if (!child.pid) return;
       const descendants = processTree(child.pid);
-      try { process.kill(-child.pid, "SIGTERM"); } catch { /* already exited */ }
+      const sig = immediate ? "SIGKILL" : "SIGTERM";
+      try { process.kill(-child.pid, sig); } catch { /* already exited */ }
+      try { process.kill(child.pid, sig); } catch { /* already exited */ }
       for (const pid of descendants) {
-        try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
+        try { process.kill(pid, sig); } catch { /* already exited */ }
       }
-      setTimeout(() => {
-        try { process.kill(-child.pid!, "SIGKILL"); } catch { /* already exited */ }
-        for (const pid of descendants) {
-          try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
-        }
-      }, 500).unref();
+      if (!immediate) {
+        setTimeout(() => {
+          try { process.kill(-child.pid!, "SIGKILL"); } catch { /* already exited */ }
+          try { process.kill(child.pid!, "SIGKILL"); } catch { /* already exited */ }
+          for (const pid of descendants) {
+            try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
+          }
+        }, 300).unref();
+      }
     };
-    const abort = (): void => { stop(); finish(reject as (value: never) => void, new Error("AGY job cancelled") as never); };
+    const abort = (): void => { stop(true); finish(reject as (value: never) => void, new Error("AGY job cancelled") as never); };
     const timer = setTimeout(() => { timedOut = true; stop(); }, config.timeoutMs);
     signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
