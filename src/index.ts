@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { ConversationDatabase, formatRelativeTime, isUuid, type ConversationPage } from "./db.js";
@@ -764,7 +765,7 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-const sentImagePaths = new Set<string>();
+const sentImagePathsByChat = new Map<string, Set<string>>();
 
 function didExecuteImageGeneration(result: AgyResult): boolean {
   for (const event of result.events) {
@@ -787,6 +788,13 @@ async function detectAndSendGeneratedImages(
   // STRICT GUARD: If the AI never generated an image in this turn, do not scan or send anything!
   if (!didExecuteImageGeneration(result)) return;
 
+  const chatKey = String(chatId);
+  let sentImagePaths = sentImagePathsByChat.get(chatKey);
+  if (!sentImagePaths) {
+    sentImagePaths = new Set<string>();
+    sentImagePathsByChat.set(chatKey, sentImagePaths);
+  }
+
   const imagesToSend = new Set<string>();
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
@@ -802,7 +810,7 @@ async function detectAndSendGeneratedImages(
   // 2. Scan conversation artifact directory for images created ONLY DURING THIS JOB (mtime >= jobStartedAt - 1000)
   const convId = conversationId || result.conversationId;
   if (convId) {
-    const homeDir = process.env.HOME || "/root";
+    const homeDir = os.homedir();
     const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId);
     try {
       const entries = await fs.readdir(brainDir, { withFileTypes: true });
@@ -1004,6 +1012,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
   } finally {
     clearInterval(heartbeatTimer);
     controllers.delete(`prompt:${job.chatId}`);
+    sentImagePathsByChat.delete(String(job.chatId));
     if (job.imagePath) {
       await fs.unlink(job.imagePath).catch(() => undefined);
     }
