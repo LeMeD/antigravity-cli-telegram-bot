@@ -1,12 +1,16 @@
 import type { ReplyKeyboardMarkup, SessionSettings } from "./types.js";
 
-function modeLabel(mode: SessionSettings["mode"]): string { return mode === "accept-edits" ? "edit" : "plan"; }
+function verboseLabel(verbose: SessionSettings["verbose"]): string {
+  if (verbose === "compact") return "comp";
+  if (verbose === "silent") return "sil";
+  return "det";
+}
 
 /** Persistent keyboard shown immediately above Telegram's input field. */
 export function createMainKeyboard(settings: SessionSettings): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      ["🤖 Model", `⚙ Mode: ${modeLabel(settings.mode)}`],
+      ["✨ New session", "🤖 Model", `📢 Verbose: ${verboseLabel(settings.verbose)}`],
     ],
     resize_keyboard: true,
     is_persistent: true,

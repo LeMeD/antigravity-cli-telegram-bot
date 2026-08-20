@@ -21,8 +21,15 @@ export function buildArgs(config: AgyConfig, prompt: string, conversationId: str
   const args = ["--print", finalPrompt, "--output-format", outputFormat, "--print-timeout", effective.printTimeout || `${Math.ceil(effective.timeoutMs / 1000)}s`];
   if (effective.project) args.push("--project", effective.project);
   if (effective.mode) args.push("--mode", effective.mode);
-  if (effective.model) args.push("--model", effective.model);
-  if (effective.effort) args.push("--effort", effective.effort);
+  if (effective.model) {
+    args.push("--model", effective.model);
+    const modelHasEffort = /-(low|medium|high)$/i.test(effective.model);
+    if (!modelHasEffort && effective.effort) {
+      args.push("--effort", effective.effort);
+    }
+  } else if (effective.effort) {
+    args.push("--effort", effective.effort);
+  }
   if (effective.agent) args.push("--agent", effective.agent);
   const dirs = new Set(effective.addDirs || []);
   if (overrides.imagePath) dirs.add(path.dirname(overrides.imagePath));
@@ -238,10 +245,54 @@ export function parseStreamOutput(stdout: string): AgyResult {
 export function formatStepUpdate(stepUpdate: Record<string, unknown> | undefined): string | null {
   if (!stepUpdate) return null;
   const tool = asRecord(stepUpdate.tool_info);
-  if (tool) return `Tool: ${stringValue(tool.name) || stringValue(tool.tool_name) || stringValue(tool.tool) || stringValue(stepUpdate.step_type) || "tool"}`;
-  if (stepUpdate.subagent_info) return "Delegating to a subagent...";
-  if (stepUpdate.step_type === "agent_response") return "Generating response...";
-  if (stepUpdate.step_type === "checkpoint") return "Saving checkpoint...";
+  if (tool) {
+    const toolName = stringValue(tool.name) || stringValue(tool.tool_name) || stringValue(tool.tool) || stringValue(stepUpdate.step_type) || "tool";
+    const args = asRecord(tool.parameters) || asRecord(tool.args) || asRecord(tool.input) || {};
+    const summary = stringValue(tool.toolSummary) || stringValue(tool.toolAction) || "";
+
+    if (toolName === "run_command" || toolName === "bash" || toolName === "terminal" || toolName === "execute_command") {
+      const cmd = stringValue(args.CommandLine) || stringValue(args.command) || stringValue(args.cmd) || summary;
+      const shortCmd = cmd ? (cmd.length > 55 ? `${cmd.slice(0, 52)}...` : cmd) : "";
+      return shortCmd ? `⚙️ Command: ${shortCmd}` : "⚙️ Running command...";
+    }
+    if (toolName === "view_file" || toolName === "read_file" || toolName === "read_text_file" || toolName === "read_resource") {
+      const file = stringValue(args.AbsolutePath) || stringValue(args.TargetFile) || stringValue(args.path) || stringValue(args.file) || summary;
+      const baseFile = file ? path.basename(file) : "";
+      return baseFile ? `📄 Reading file: ${baseFile}` : "📄 Reading file...";
+    }
+    if (toolName === "replace_file_content" || toolName === "write_to_file" || toolName === "edit_file" || toolName === "write_file") {
+      const file = stringValue(args.TargetFile) || stringValue(args.path) || stringValue(args.file) || summary;
+      const baseFile = file ? path.basename(file) : "";
+      return baseFile ? `✏️ Editing file: ${baseFile}` : "✏️ Editing file...";
+    }
+    if (toolName === "search_web" || toolName === "web_search") {
+      const query = stringValue(args.query) || stringValue(args.Query) || summary;
+      const shortQuery = query ? (query.length > 45 ? `${query.slice(0, 42)}...` : query) : "";
+      return shortQuery ? `🔍 Web search: "${shortQuery}"` : "🔍 Web search...";
+    }
+    if (toolName === "read_url_content" || toolName === "fetch" || toolName === "browse") {
+      const url = stringValue(args.Url) || stringValue(args.url) || summary;
+      const shortUrl = url ? (url.length > 45 ? `${url.slice(0, 42)}...` : url) : "";
+      return shortUrl ? `🌐 Fetching: ${shortUrl}` : "🌐 Fetching URL...";
+    }
+    if (toolName === "list_dir" || toolName === "list_directory" || toolName === "find_by_name" || toolName === "grep_search") {
+      const target = summary || stringValue(args.Pattern) || stringValue(args.Query) || stringValue(args.DirectoryPath) || "";
+      const shortTarget = target ? (target.length > 45 ? `${target.slice(0, 42)}...` : target) : "";
+      return shortTarget ? `📁 File search: ${shortTarget}` : "📁 Searching files...";
+    }
+    if (summary) {
+      return `🔧 ${summary.length > 55 ? `${summary.slice(0, 52)}...` : summary}`;
+    }
+    return `🔧 Tool: ${toolName}`;
+  }
+  const subagent = asRecord(stepUpdate.subagent_info);
+  if (subagent) {
+    const role = stringValue(subagent.role) || stringValue(subagent.name) || "";
+    return role ? `🤖 Subagent: ${role}` : "🤖 Delegating to subagent...";
+  }
+  if (stepUpdate.step_type === "agent_response") return "💬 Generating response...";
+  if (stepUpdate.step_type === "checkpoint") return "💾 Saving checkpoint...";
+  if (stepUpdate.step_type === "thinking" || typeof stepUpdate.thought === "string") return "🤔 Thinking...";
   if (typeof stepUpdate.step_type === "string" && !["user_input", "unknown"].includes(stepUpdate.step_type)) return `Step: ${stepUpdate.step_type}`;
   return null;
 }

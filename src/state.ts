@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ChatId, PersistedState, SessionState } from "./types.js";
+import type { ChatId, InFlightJob, PersistedState, SessionState } from "./types.js";
 
 export class StateStore {
   private data: PersistedState = { updateOffset: 0, sessions: {} };
@@ -16,6 +16,7 @@ export class StateStore {
       this.data = {
         updateOffset: Number.isSafeInteger(value.updateOffset) ? value.updateOffset as number : 0,
         sessions: value.sessions && typeof value.sessions === "object" ? value.sessions as Record<string, SessionState> : {},
+        inFlight: value.inFlight && typeof value.inFlight === "object" ? value.inFlight : {},
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -23,13 +24,41 @@ export class StateStore {
   }
 
   public session(chatId: ChatId): SessionState | null { return this.data.sessions[String(chatId)] || null; }
-  public async resetSession(chatId: ChatId): Promise<void> { delete this.data.sessions[String(chatId)]; await this.save(); }
+  public async resetSession(chatId: ChatId): Promise<void> {
+    const existing = this.data.sessions[String(chatId)];
+    if (existing?.settings) {
+      this.data.sessions[String(chatId)] = {
+        settings: existing.settings,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      delete this.data.sessions[String(chatId)];
+    }
+    await this.save();
+  }
   public async setSession(chatId: ChatId, session: SessionState): Promise<void> {
     this.data.sessions[String(chatId)] = { ...this.data.sessions[String(chatId)], ...session };
     await this.save();
   }
   public async setOffset(offset: number): Promise<void> { this.data.updateOffset = offset; await this.save(); }
   public get offset(): number { return this.data.updateOffset; }
+
+  public get inFlight(): Record<string, InFlightJob> { return this.data.inFlight || {}; }
+  public async setInFlight(chatId: ChatId, job: InFlightJob): Promise<void> {
+    if (!this.data.inFlight) this.data.inFlight = {};
+    this.data.inFlight[String(chatId)] = job;
+    await this.save();
+  }
+  public async clearInFlight(chatId: ChatId): Promise<void> {
+    if (this.data.inFlight && this.data.inFlight[String(chatId)]) {
+      delete this.data.inFlight[String(chatId)];
+      await this.save();
+    }
+  }
+  public async clearAllInFlight(): Promise<void> {
+    this.data.inFlight = {};
+    await this.save();
+  }
 
   private async save(): Promise<void> {
     this.writeChain = this.writeChain.catch(() => undefined).then(async () => {

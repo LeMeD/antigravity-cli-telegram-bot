@@ -6,3 +6,19 @@ import path from "node:path";
 import { StateStore } from "../src/state.js";
 
 test("merges session updates and persists them with restricted permissions", async () => { const directory = await fs.mkdtemp(path.join(os.tmpdir(), "agy-state-")); const file = path.join(directory, "state.json"); const state = new StateStore(file); await state.load(); await state.setSession("123", { conversationId: "conv-1", settings: { mode: "plan" } }); await state.setSession("123", { lastRun: { status: "SUCCESS" } }); assert.deepEqual(state.session("123"), { conversationId: "conv-1", settings: { mode: "plan" }, lastRun: { status: "SUCCESS" } }); assert.equal((await fs.stat(file)).mode & 0o777, 0o600); });
+
+test("tracks and persists inFlight jobs across StateStore reloads", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "agy-state-inflight-"));
+  const file = path.join(directory, "state.json");
+  const state = new StateStore(file);
+  await state.load();
+  await state.setInFlight("999", { prompt: "Test prompt", startedAt: 123456789 });
+  assert.deepEqual(state.inFlight["999"], { prompt: "Test prompt", startedAt: 123456789 });
+
+  const state2 = new StateStore(file);
+  await state2.load();
+  assert.deepEqual(state2.inFlight["999"], { prompt: "Test prompt", startedAt: 123456789 });
+
+  await state2.clearInFlight("999");
+  assert.equal(state2.inFlight["999"], undefined);
+});

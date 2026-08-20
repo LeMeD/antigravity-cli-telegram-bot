@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { ChatId, InlineKeyboardMarkup, ReplyMarkup, TelegramUpdate } from "./types.js";
 
@@ -38,6 +39,13 @@ export class TelegramClient {
       throw error;
     }
   }
+  public async deleteMessage(chatId: ChatId, messageId: number): Promise<boolean> {
+    try {
+      return await this.call<boolean>("deleteMessage", { chat_id: chatId, message_id: messageId });
+    } catch {
+      return false;
+    }
+  }
   public answerCallbackQuery(callbackQueryId: string, text?: string): Promise<boolean> { return this.call<boolean>("answerCallbackQuery", { callback_query_id: callbackQueryId, ...(text ? { text } : {}) }); }
   public setMyCommands(commands: Array<{ command: string; description: string }>): Promise<boolean> { return this.call<boolean>("setMyCommands", { commands }); }
   public sendChatAction(chatId: ChatId, action = "typing"): Promise<boolean> { return this.call<boolean>("sendChatAction", { chat_id: chatId, action }); }
@@ -48,7 +56,7 @@ export class TelegramClient {
     if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
     return body.result;
   }
-  public async sendPhoto(chatId: ChatId, photoPath: string | Buffer, caption?: string, parseMode?: TelegramParseMode, mimeType?: string): Promise<unknown> {
+  public async sendPhoto(chatId: ChatId, photoPath: string | Buffer, caption?: string, parseMode?: TelegramParseMode, mimeType?: string, replyMarkup?: ReplyMarkup): Promise<unknown> {
     const form = new FormData();
     form.append("chat_id", String(chatId));
     if (typeof photoPath === "string") {
@@ -61,11 +69,33 @@ export class TelegramClient {
       const mime = mimeType || "image/png";
       form.append("photo", new Blob([new Uint8Array(photoPath)], { type: mime }), `image.${mime.split("/")[1] || "png"}`);
     }
-    if (caption) form.append("caption", caption.slice(0, 1024));
-    if (parseMode) form.append("parse_mode", parseMode);
+    if (caption) {
+      form.append("caption", caption.slice(0, 1024));
+      if (parseMode) form.append("parse_mode", parseMode);
+    }
+    if (replyMarkup) {
+      form.append("reply_markup", JSON.stringify(replyMarkup));
+    }
     const response = await fetch(`${this.root}/sendPhoto`, { method: "POST", body: form });
     const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
     if (!response.ok || !body.ok) throw new Error(`Telegram sendPhoto failed: ${body.description || response.status}`);
+    return body.result;
+  }
+  public async sendDocumentFile(chatId: ChatId, filePath: string, caption?: string, replyMarkup?: ReplyMarkup): Promise<unknown> {
+    const fileBuffer = await fs.readFile(filePath);
+    const form = new FormData();
+    form.append("chat_id", String(chatId));
+    form.append("document", new Blob([fileBuffer]), path.basename(filePath));
+    if (caption) {
+      form.append("caption", caption.slice(0, 1024));
+      form.append("parse_mode", "HTML");
+    }
+    if (replyMarkup) {
+      form.append("reply_markup", JSON.stringify(replyMarkup));
+    }
+    const response = await fetch(`${this.root}/sendDocument`, { method: "POST", body: form });
+    const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
+    if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
     return body.result;
   }
   public getFile(fileId: string): Promise<{ file_id: string; file_path?: string; file_size?: number }> {
@@ -132,19 +162,24 @@ export function formatTelegramHtmlChunks(text: string, maxChars: number): string
   const chunks: string[] = [];
   let current = "";
   const append = (piece: string): void => {
-    if (!piece) return;
+    if (!piece) {
+      if (current && !current.endsWith("\n")) {
+        current += "\n";
+      }
+      return;
+    }
     const candidate = current ? `${current}\n${piece}` : piece;
     if (candidate.length <= maxChars) {
       current = candidate;
       return;
     }
-    if (current) chunks.push(current);
+    if (current) chunks.push(current.trimEnd());
     current = "";
     if (piece.length <= maxChars) current = piece;
     else chunks.push(...splitOversizedHtmlBlock(piece, maxChars));
   };
   for (const block of blocks) append(block);
-  if (current) chunks.push(current);
+  if (current) chunks.push(current.trimEnd());
   return chunks;
 }
 
@@ -155,7 +190,8 @@ function renderTelegramBlocks(text: string): string[] {
   const output: string[] = [];
   let codeLines: string[] | null = null;
   let codeLanguage = "";
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const fence = line.match(/^\s*```\s*([\w+-]*)\s*$/);
     if (fence) {
       if (codeLines) {
@@ -173,6 +209,29 @@ function renderTelegramBlocks(text: string): string[] {
       codeLines.push(line);
       continue;
     }
+
+    // Fallback: Deterministic Markdown Table Parser
+    if (isPotentialTableRow(line) && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
+      const tableLines: string[] = [line, lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && isPotentialTableRow(lines[j]) && !lines[j].match(/^\s*```/)) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+      const renderedTable = formatMarkdownTable(tableLines);
+      if (renderedTable) {
+        output.push(renderedTable);
+        i = j - 1;
+        continue;
+      }
+    }
+
+    const divider = line.match(/^\s*[-*_]{3,}\s*$/);
+    if (divider) {
+      output.push("");
+      continue;
+    }
+
     const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     if (heading) {
       output.push(`<b>${formatInlineHtml(heading[1])}</b>`);
@@ -192,6 +251,87 @@ function renderTelegramBlocks(text: string): string[] {
   }
   if (codeLines) output.push(`<pre><code${codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : ""}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
   return output;
+}
+
+function isTableSeparatorLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(trimmed);
+}
+
+function isPotentialTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("```") || trimmed.startsWith("#")) return false;
+  return trimmed.includes("|");
+}
+
+function parseMarkdownTableCells(line: string): string[] {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function cleanCellText(cell: string): string {
+  return cell
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
+function formatMarkdownTable(tableLines: string[]): string | null {
+  if (tableLines.length < 2) return null;
+
+  let sepIndex = -1;
+  for (let i = 0; i < tableLines.length; i++) {
+    if (isTableSeparatorLine(tableLines[i])) {
+      sepIndex = i;
+      break;
+    }
+  }
+  if (sepIndex < 1) return null;
+
+  const rawRows = tableLines.filter((_, idx) => idx !== sepIndex).map(parseMarkdownTableCells);
+  if (rawRows.length === 0) return null;
+
+  const cleanRows = rawRows.map((row) => row.map(cleanCellText));
+  const colCount = Math.max(...cleanRows.map((r) => r.length));
+  if (colCount === 0) return null;
+
+  const colWidths = Array.from({ length: colCount }, (_, colIdx) =>
+    Math.max(
+      3,
+      ...cleanRows.map((row) => (row[colIdx] ? row[colIdx].length : 0))
+    )
+  );
+
+  const formattedRows: string[] = [];
+  const headerRow = cleanRows[0];
+  const headerFormatted = colWidths
+    .map((width, colIdx) => (headerRow[colIdx] || "").padEnd(width))
+    .join("  ")
+    .trimEnd();
+  formattedRows.push(headerFormatted);
+
+  const totalWidth = colWidths.reduce((sum, w) => sum + w, 0) + (colCount - 1) * 2;
+  formattedRows.push("─".repeat(Math.max(totalWidth, 10)));
+
+  for (let r = 1; r < cleanRows.length; r++) {
+    const row = cleanRows[r];
+    if (row.every((c) => !c)) continue;
+    const rowFormatted = colWidths
+      .map((width, colIdx) => (row[colIdx] || "").padEnd(width))
+      .join("  ")
+      .trimEnd();
+    formattedRows.push(rowFormatted);
+  }
+
+  return `<pre><code class="language-text">${escapeHtml(formattedRows.join("\n"))}</code></pre>`;
 }
 
 function splitOversizedHtmlBlock(block: string, maxChars: number): string[] {
@@ -214,10 +354,18 @@ function formatInlineHtml(value: string): string {
     tokens.push(html);
     return marker;
   };
+
   let escaped = escapeHtml(value);
+  // Parse markdown links FIRST before inline code tokens to prevent [`file`](file://...) nesting bugs
+  escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => {
+    const cleanLabel = label.replace(/^`+|`+$/g, "");
+    return token(`<a href="${url}">${cleanLabel}</a>`);
+  });
+  escaped = escaped.replace(/\[([^\]]+)\]\(file:\/\/\/[^\s)]+\)/g, (_match, label: string) => {
+    const cleanLabel = label.replace(/^`+|`+$/g, "");
+    return token(`<code>${cleanLabel}</code>`);
+  });
   escaped = escaped.replace(/`([^`\n]+)`/g, (_match, code: string) => token(`<code>${code}</code>`));
-  escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => token(`<a href="${url}">${label}</a>`));
-  escaped = escaped.replace(/\[([^\]]+)\]\(file:\/\/\/[^\s)]+\)/g, (_match, label: string) => token(`<code>${label}</code>`));
   escaped = escaped.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_match, boldA: string | undefined, boldB: string | undefined) => `<b>${boldA || boldB}</b>`);
   escaped = escaped.replace(/~~(.+?)~~/g, "<s>$1</s>");
   escaped = escaped.replace(/\*([^*\n]+)\*|_([^_\n]+)_/g, (_match, italicA: string | undefined, italicB: string | undefined) => `<i>${italicA || italicB}</i>`);
@@ -226,4 +374,137 @@ function formatInlineHtml(value: string): string {
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function isPrivateOrReservedHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().trim();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    return true;
+  }
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [b0, b1] = [Number(ipv4Match[1]), Number(ipv4Match[2])];
+    if (b0 === 127) return true;
+    if (b0 === 10) return true;
+    if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
+    if (b0 === 192 && b1 === 168) return true;
+    if (b0 === 169 && b1 === 254) return true;
+    if (b0 === 0) return true;
+    if (b0 === 100 && b1 >= 64 && b1 <= 127) return true;
+  }
+  if (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc00:") || host.startsWith("fd")) {
+    return true;
+  }
+  return false;
+}
+
+export async function findReferencedMediaFiles(text: string, workspaceDir?: string): Promise<string[]> {
+  const candidates = new Set<string>();
+
+  // 1. Markdown image embeds: ![caption](/path/to/img.png) or ![caption](file:///path/to/img.png)
+  const mdImgRegex = /!\[.*?\]\((?:file:\/\/)?([^\s)]+?\.(?:png|jpe?g|webp|gif|svg))\)/gi;
+  for (const match of text.matchAll(mdImgRegex)) {
+    const rawPath = match[1].trim();
+    candidates.add(rawPath);
+  }
+
+  // 2. HTML img tags: <img src="/path/to/img.png">
+  const htmlImgRegex = /<img[^>]+src=["'](?:file:\/\/)?([^"']+\.(?:png|jpe?g|webp|gif|svg))["']/gi;
+  for (const match of text.matchAll(htmlImgRegex)) {
+    const rawPath = match[1].trim();
+    candidates.add(rawPath);
+  }
+
+  // 3. Temporary / preview images (e.g. /tmp/preview_*.jpg or /tmp/*.png)
+  const mediaPathRegex = /(?:^|[\s"'`(\[])(\/(?:tmp|var\/tmp)[^\s"'`)\]]+\.(?:png|jpe?g|webp|gif|svg))/gi;
+  for (const match of text.matchAll(mediaPathRegex)) {
+    candidates.add(match[1].trim());
+  }
+
+  const validFiles: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || candidate.startsWith("http://") || candidate.startsWith("https://")) continue;
+    const resolved = path.isAbsolute(candidate)
+      ? candidate
+      : (workspaceDir ? path.resolve(workspaceDir, candidate) : path.resolve(candidate));
+    try {
+      const stat = await fs.stat(resolved);
+      if (stat.isFile() && stat.size > 0 && stat.size < 50 * 1024 * 1024) {
+        if (!validFiles.includes(resolved)) {
+          validFiles.push(resolved);
+        }
+      }
+    } catch {
+      // file does not exist locally, skip
+    }
+  }
+
+  // 4. Immich asset links (strictly when configured via IMMICH_URL and IMMICH_KEY)
+  const immichHost = (process.env.IMMICH_URL || "").trim().replace(/\/+$/, "");
+  const immichKey = (process.env.IMMICH_KEY || process.env.IMMICH_API_KEY || "").trim();
+
+  if (immichHost && immichKey) {
+    try {
+      const immichUrlObj = new URL(immichHost);
+      const escapedOrigin = immichUrlObj.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const immichRegex = new RegExp(`(?:${escapedOrigin}\\/(?:photos|api\\/assets)\\/([a-f0-9-]{36}))`, "gi");
+
+      for (const match of text.matchAll(immichRegex)) {
+        const assetId = match[1];
+        const targetPath = path.join(os.tmpdir(), `immich_${assetId}.jpg`);
+        try {
+          const stat = await fs.stat(targetPath).catch(() => null);
+          if (!stat || stat.size === 0) {
+            const url = `${immichHost}/api/assets/${assetId}/thumbnail?size=preview`;
+            const res = await fetch(url, { headers: { "x-api-key": immichKey }, signal: AbortSignal.timeout(8000) });
+            if (res.ok) {
+              const buffer = Buffer.from(await res.arrayBuffer());
+              await fs.writeFile(targetPath, buffer);
+            }
+          }
+          const finalStat = await fs.stat(targetPath).catch(() => null);
+          if (finalStat && finalStat.size > 0 && !validFiles.includes(targetPath)) {
+            validFiles.push(targetPath);
+          }
+        } catch {
+          // ignore download failure
+        }
+      }
+    } catch {
+      // Invalid IMMICH_URL format, skip
+    }
+  }
+
+  // 5. Public Web Images: ![caption](https://example.com/image.png) or https://.../img.jpg
+  const webImgRegex = /!?\[.*?\]\((https?:\/\/[^\s)]+?\.(?:png|jpe?g|webp|gif|svg))\)|(?:^|[\s"'`(\[])(https?:\/\/[^\s"'`)\]]+?\.(?:png|jpe?g|webp|gif|svg))/gi;
+  for (const match of text.matchAll(webImgRegex)) {
+    const webUrl = (match[1] || match[2] || "").trim();
+    if (!webUrl) continue;
+    try {
+      const parsedUrl = new URL(webUrl);
+      if (isPrivateOrReservedHost(parsedUrl.hostname)) continue;
+
+      const ext = path.extname(parsedUrl.pathname).toLowerCase() || ".jpg";
+      const hash = Buffer.from(webUrl).toString("base64url").slice(0, 24);
+      const targetPath = path.join(os.tmpdir(), `web_media_${hash}${ext}`);
+      const stat = await fs.stat(targetPath).catch(() => null);
+      if (!stat || stat.size === 0) {
+        const res = await fetch(webUrl, { signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          if (buffer.length < 20 * 1024 * 1024) { // max 20MB
+            await fs.writeFile(targetPath, buffer);
+          }
+        }
+      }
+      const finalStat = await fs.stat(targetPath).catch(() => null);
+      if (finalStat && finalStat.size > 0 && !validFiles.includes(targetPath)) {
+        validFiles.push(targetPath);
+      }
+    } catch {
+      // ignore download failure
+    }
+  }
+
+  return validFiles;
 }

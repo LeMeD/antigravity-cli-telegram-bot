@@ -2,6 +2,8 @@ import type { ModelOption } from "./types.js";
 
 export const DEFAULT_MODELS: ModelOption[] = [
   { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)", maxContextWindow: 1_000_000 },
+  { id: "gemini-3.7-flash-medium", label: "Gemini 3.7 Flash (Medium)", maxContextWindow: 1_000_000 },
+  { id: "gemini-3.7-flash-low", label: "Gemini 3.7 Flash (Low)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash (High)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash (Medium)", maxContextWindow: 1_000_000 },
   { id: "gemini-3.6-flash-low", label: "Gemini 3.6 Flash (Low)", maxContextWindow: 1_000_000 },
@@ -15,14 +17,49 @@ export const DEFAULT_MODELS: ModelOption[] = [
   { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)", maxContextWindow: 128_000 },
 ];
 
+let activeModels: ModelOption[] = [...DEFAULT_MODELS];
+
+export function getActiveModels(): ModelOption[] {
+  return activeModels;
+}
+
+export function setActiveModels(models: ModelOption[]): void {
+  if (models && models.length > 0) {
+    activeModels = models;
+  }
+}
+
+export function parseAgyModelsOutput(output: string): ModelOption[] {
+  const models: ModelOption[] = [];
+  const lines = output.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const cleaned = rawLine.replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+/g, "").trim();
+    if (!cleaned || /fetching available models/i.test(cleaned)) continue;
+    const match = cleaned.match(/^([a-z0-9_.-]+)\s+(.+)$/i);
+    if (match) {
+      const id = match[1].trim();
+      const label = match[2].trim();
+      if (id && label && !id.includes(" ")) {
+        const lower = id.toLowerCase();
+        let maxContextWindow = 1_000_000;
+        if (lower.includes("pro")) maxContextWindow = 2_000_000;
+        else if (lower.includes("claude")) maxContextWindow = 200_000;
+        else if (lower.includes("gpt")) maxContextWindow = 128_000;
+        models.push({ id, label, maxContextWindow });
+      }
+    }
+  }
+  return models;
+}
+
 export function modelLabel(id: string | null): string {
   if (!id) return "AGY default";
-  return DEFAULT_MODELS.find((model) => model.id === id)?.label || id;
+  return getActiveModels().find((model) => model.id === id)?.label || id;
 }
 
 export function getModelMaxContext(id: string | null): number {
   if (!id) return 1_000_000;
-  const match = DEFAULT_MODELS.find((model) => model.id === id);
+  const match = getActiveModels().find((model) => model.id === id);
   if (match?.maxContextWindow) return match.maxContextWindow;
   const lower = id.toLowerCase();
   if (lower.includes("gemini")) return 1_000_000;
