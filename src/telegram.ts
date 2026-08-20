@@ -356,6 +356,16 @@ function formatInlineHtml(value: string): string {
   };
 
   let escaped = escapeHtml(value);
+  // Parse markdown image embeds FIRST to prevent local paths from leaking into chat or colliding with link parsing
+  escaped = escaped.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => {
+    const cleanLabel = label.replace(/^`+|`+$/g, "").trim();
+    return token(cleanLabel ? `🖼 <a href="${url}">${cleanLabel}</a>` : `<a href="${url}">🖼 Image</a>`);
+  });
+  escaped = escaped.replace(/!\[([^\]]*)\]\((?:file:\/\/)?([^\s)]+)\)/g, (_match, label: string) => {
+    const cleanLabel = label.replace(/^`+|`+$/g, "").trim();
+    return token(cleanLabel ? `🖼 <i>${cleanLabel}</i>` : "");
+  });
+
   // Parse markdown links FIRST before inline code tokens to prevent [`file`](file://...) nesting bugs
   escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => {
     const cleanLabel = label.replace(/^`+|`+$/g, "");
@@ -439,43 +449,7 @@ export async function findReferencedMediaFiles(text: string, workspaceDir?: stri
     }
   }
 
-  // 4. Immich asset links (strictly when configured via IMMICH_URL and IMMICH_KEY)
-  const immichHost = (process.env.IMMICH_URL || "").trim().replace(/\/+$/, "");
-  const immichKey = (process.env.IMMICH_KEY || process.env.IMMICH_API_KEY || "").trim();
-
-  if (immichHost && immichKey) {
-    try {
-      const immichUrlObj = new URL(immichHost);
-      const escapedOrigin = immichUrlObj.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const immichRegex = new RegExp(`(?:${escapedOrigin}\\/(?:photos|api\\/assets)\\/([a-f0-9-]{36}))`, "gi");
-
-      for (const match of text.matchAll(immichRegex)) {
-        const assetId = match[1];
-        const targetPath = path.join(os.tmpdir(), `immich_${assetId}.jpg`);
-        try {
-          const stat = await fs.stat(targetPath).catch(() => null);
-          if (!stat || stat.size === 0) {
-            const url = `${immichHost}/api/assets/${assetId}/thumbnail?size=preview`;
-            const res = await fetch(url, { headers: { "x-api-key": immichKey }, signal: AbortSignal.timeout(8000) });
-            if (res.ok) {
-              const buffer = Buffer.from(await res.arrayBuffer());
-              await fs.writeFile(targetPath, buffer);
-            }
-          }
-          const finalStat = await fs.stat(targetPath).catch(() => null);
-          if (finalStat && finalStat.size > 0 && !validFiles.includes(targetPath)) {
-            validFiles.push(targetPath);
-          }
-        } catch {
-          // ignore download failure
-        }
-      }
-    } catch {
-      // Invalid IMMICH_URL format, skip
-    }
-  }
-
-  // 5. Public Web Images: ![caption](https://example.com/image.png) or https://.../img.jpg
+  // 4. Public Web Images: ![caption](https://example.com/image.png) or https://.../img.jpg
   const webImgRegex = /!?\[.*?\]\((https?:\/\/[^\s)]+?\.(?:png|jpe?g|webp|gif|svg))\)|(?:^|[\s"'`(\[])(https?:\/\/[^\s"'`)\]]+?\.(?:png|jpe?g|webp|gif|svg))/gi;
   for (const match of text.matchAll(webImgRegex)) {
     const webUrl = (match[1] || match[2] || "").trim();

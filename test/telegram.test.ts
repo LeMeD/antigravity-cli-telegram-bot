@@ -43,21 +43,21 @@ test("formats AGY Markdown-like responses as safe Telegram HTML", () => {
 });
 
 test("converts markdown tables to aligned monospace codeblocks in Telegram HTML", () => {
-  const markdown = `Hier ist eine Tabelle:
+  const markdown = `Here is a table:
 
-| Komponente / Service | Kategorie | Status / Einsatzbereich |
+| Component / Service | Category | Status / Purpose |
 | :--- | :--- | :--- |
-| **Immich** | Medienverwaltung | Self-Hosted Fotos & Videos |
-| **Home Assistant** | Home Automation | Smart Home Steuerung & Sensorik |
-| **Tailscale** | Netzwerk | Sicheres WireGuard Mesh-VPN |
+| **API Gateway** | Networking | Entry point & routing |
+| **Database** | Storage | State management & logs |
+| **Worker Node** | Compute | Background job processor |
 
-Ende der Tabelle.`;
+End of table.`;
 
   const html = formatTelegramHtml(markdown);
-  assert.match(html, /Hier ist eine Tabelle:/);
-  assert.match(html, /<pre><code class="language-text">Komponente \/ Service\s+Kategorie\s+Status \/ Einsatzbereich\n─+\nImmich\s+Medienverwaltung\s+Self-Hosted Fotos &amp; Videos\nHome Assistant\s+Home Automation\s+Smart Home Steuerung &amp; Sensorik\nTailscale\s+Netzwerk\s+Sicheres WireGuard Mesh-VPN<\/code><\/pre>/);
-  assert.match(html, /Ende der Tabelle\./);
-  assert.doesNotMatch(html, /\| \*\*Immich\*\*/);
+  assert.match(html, /Here is a table:/);
+  assert.match(html, /<pre><code class="language-text">Component \/ Service\s+Category\s+Status \/ Purpose\n─+\nAPI Gateway\s+Networking\s+Entry point &amp; routing\nDatabase\s+Storage\s+State management &amp; logs\nWorker Node\s+Compute\s+Background job processor<\/code><\/pre>/);
+  assert.match(html, /End of table\./);
+  assert.doesNotMatch(html, /\| \*\*API Gateway\*\*/);
 });
 
 test("keeps long responses formatted while chunking under Telegram limits", () => {
@@ -93,13 +93,6 @@ test("findReferencedMediaFiles detects markdown images and file paths", async ()
   }
 });
 
-test("findReferencedMediaFiles handles immich photos links gracefully without env", async () => {
-  const text = "1. [Photo](https://immich.example.com/photos/d70172f4-6029-4065-a9f9-6cb701f55f94)";
-  const media = await findReferencedMediaFiles(text);
-  assert.ok(Array.isArray(media));
-  assert.equal(media.length, 0);
-});
-
 test("findReferencedMediaFiles blocks private IP and localhost web images (SSRF protection)", async () => {
   const text = "Check ![Local](http://127.0.0.1:8080/secret.png) and ![Internal](http://192.168.1.50/admin.jpg) and ![Cloud](http://169.254.169.254/latest/meta-data.png)";
   const media = await findReferencedMediaFiles(text);
@@ -107,8 +100,19 @@ test("findReferencedMediaFiles blocks private IP and localhost web images (SSRF 
 });
 
 test("formatTelegramHtmlChunks preserves paragraph empty lines between blocks", () => {
-  const markdown = "**Galaxus**\n• Item 1\n• Item 2\n\n**Stadt Zürich**\n• Item 3";
+  const markdown = "**Header 1**\n• Item 1\n• Item 2\n\n**Header 2**\n• Item 3";
   const chunks = formatTelegramHtmlChunks(markdown, 1000);
   assert.equal(chunks.length, 1);
-  assert.equal(chunks[0], "<b>Galaxus</b>\n• Item 1\n• Item 2\n\n<b>Stadt Zürich</b>\n• Item 3");
+  assert.equal(chunks[0], "<b>Header 1</b>\n• Item 1\n• Item 2\n\n<b>Header 2</b>\n• Item 3");
 });
+
+test("formatTelegramHtmlChunks cleans local image markdown paths and formats captions", () => {
+  const markdown = "Hier ist das Bild:\n\n![Henrik mit Führerausweis](/tmp/immich_sample.jpg)\n\nUnd hier ohne Caption:\n![](/tmp/another.jpg)\n\nUnd Web-Image:\n![Chart](https://example.com/chart.png)";
+  const chunks = formatTelegramHtmlChunks(markdown, 1000);
+  assert.equal(chunks.length, 1);
+  assert.ok(!chunks[0].includes("/tmp/immich_sample.jpg"));
+  assert.ok(!chunks[0].includes("/tmp/another.jpg"));
+  assert.ok(chunks[0].includes("🖼 <i>Henrik mit Führerausweis</i>"));
+  assert.ok(chunks[0].includes('🖼 <a href="https://example.com/chart.png">Chart</a>'));
+});
+
