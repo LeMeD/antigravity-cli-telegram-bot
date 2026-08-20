@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { ConversationDatabase, formatRelativeTime, isUuid, type ConversationPage } from "./db.js";
@@ -12,7 +13,7 @@ import { createMainKeyboard } from "./keyboards.js";
 import { JobQueue, type QueueJob } from "./queue.js";
 import { StateStore } from "./state.js";
 import { escapeHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml, TelegramClient } from "./telegram.js";
-import type { AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
+import type { AgyResult, AppConfig, ChatId, ConversationSummary, InlineButton, InlineKeyboardMarkup, ReplyMarkup, SessionSettings, StreamEvent, TelegramCallbackQuery, TelegramMessage, TelegramUpdate, Usage } from "./types.js";
 
 const config = loadConfig();
 const state = new StateStore(config.stateFile);
@@ -736,7 +737,14 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
   if (command === "/context") { enqueueJob(chatId, { kind: "context" }); return true; }
   if (command === "/tokens") { await reply(chatId, usageReport(chatId), createMainKeyboard(settingsFor(chatId))); return true; }
   if (command === "/status") { const status = queue.statusForChat(chatId); await reply(chatId, `Status: ${status.active ? `running (${status.active.id})` : "idle"}\nQueued for this chat: ${status.queued}\nTotal queued: ${status.totalQueued}`, createMainKeyboard(settingsFor(chatId))); return true; }
-  if (command === "/cancel") { pendingDangerousCommands.delete(String(chatId)); const result = queue.cancelForChat(chatId); await reply(chatId, `Cancelled: ${result.removed} queued, active=${result.activeCancelled ? "yes" : "no"}.`, createMainKeyboard(settingsFor(chatId))); return true; }
+  if (command === "/cancel" || command === "/kill") {
+    pendingDangerousCommands.delete(String(chatId));
+    controllers.get(`prompt:${chatId}`)?.abort();
+    controllers.get(`custom:${chatId}`)?.abort();
+    const result = queue.cancelForChat(chatId);
+    await reply(chatId, `⛔ Cancelled: ${result.removed} queued job(s) removed, active AGY process terminated.`, createMainKeyboard(settingsFor(chatId)));
+    return true;
+  }
   if (command === "/agy-confirm") { const pending = pendingDangerousCommands.get(String(chatId)); if (!pending) await reply(chatId, "There is no pending dangerous AGY command.", createMainKeyboard(settingsFor(chatId))); else await runCustomAgy(chatId, pending, true); return true; }
   return false;
 }
@@ -746,6 +754,96 @@ function addUsage(previous: Usage | null | undefined, current: Usage | null): Us
   const total: Usage = { ...(previous || {}) };
   for (const [key, value] of Object.entries(current) as Array<[keyof Usage, number]>) total[key] = (total[key] || 0) + value;
   return total;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+const sentImagePathsByChat = new Map<string, Set<string>>();
+
+function didExecuteImageGeneration(result: AgyResult): boolean {
+  for (const event of result.events) {
+    const step = event.step_update as Record<string, unknown> | undefined;
+    const tool = step?.tool_info as Record<string, unknown> | undefined;
+    const toolName = String(tool?.name || tool?.tool_name || tool?.tool || "").toLowerCase();
+    if (toolName.includes("generate_image") || toolName.includes("image")) {
+      return true;
+    }
+  }
+  return /Generated image is saved at|!\[.*?\]\(file:\/\/\/.*?\.(?:png|jpg|jpeg|webp)\)/i.test(result.text);
+}
+
+async function detectAndSendGeneratedImages(
+  chatId: ChatId,
+  result: AgyResult,
+  conversationId: string | null | undefined,
+  jobStartedAt: number
+): Promise<void> {
+  // STRICT GUARD: If the AI never generated an image in this turn, do not scan or send anything!
+  if (!didExecuteImageGeneration(result)) return;
+
+  const chatKey = String(chatId);
+  let sentImagePaths = sentImagePathsByChat.get(chatKey);
+  if (!sentImagePaths) {
+    sentImagePaths = new Set<string>();
+    sentImagePathsByChat.set(chatKey, sentImagePaths);
+  }
+
+  const imagesToSend = new Set<string>();
+  const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+
+  // 1. Extract markdown image / file links from result.text: ![caption](file:///path/to/image.png) or file:///path/to/image.png
+  const fileMatches = result.text.matchAll(/(?:file:\/\/|['"])((\/[^\s'")]+)\.(png|jpg|jpeg|webp))(?:\b|['"]|\))/gi);
+  for (const match of fileMatches) {
+    const fullPath = `${match[2]}.${match[3]}`;
+    if (!sentImagePaths.has(fullPath) && (await fileExists(fullPath))) {
+      imagesToSend.add(fullPath);
+    }
+  }
+
+  // 2. Scan conversation artifact directory for images created ONLY DURING THIS JOB (mtime >= jobStartedAt - 1000)
+  const convId = conversationId || result.conversationId;
+  if (convId) {
+    const homeDir = os.homedir();
+    const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId);
+    try {
+      const entries = await fs.readdir(brainDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (imageExtensions.has(ext)) {
+            const filePath = path.join(brainDir, entry.name);
+            if (!sentImagePaths.has(filePath)) {
+              const stat = await fs.stat(filePath).catch(() => null);
+              if (stat && stat.mtimeMs >= jobStartedAt - 1000) {
+                imagesToSend.add(filePath);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // directory might not exist yet
+    }
+  }
+
+  // 3. Dispatch photos to Telegram chat & mark as sent
+  for (const imagePath of imagesToSend) {
+    sentImagePaths.add(imagePath);
+    try {
+      await telegram.sendChatAction(chatId, "upload_photo");
+      const basename = path.basename(imagePath);
+      await telegram.sendPhoto(chatId, imagePath, `🎨 Generated Image: ${basename}`);
+    } catch (error) {
+      console.error(`Failed to send generated image (${imagePath}):`, error);
+    }
+  }
 }
 
 async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<void> {
@@ -824,6 +922,7 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
     return;
   }
 
+  let heartbeatTimer: NodeJS.Timeout | undefined;
   try {
     await telegram.sendChatAction(job.chatId);
     const session = state.session(job.chatId);
@@ -835,16 +934,30 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
       lastProgressAt = Date.now();
       progressUpdate = progressUpdate.then(() => telegram.editMessageText(job.chatId, progressMessage!.message_id, text)).catch(() => undefined);
     };
+    let lastStepText = "AGY is starting...";
+    let lastEventReceivedAt = Date.now();
+    heartbeatTimer = setInterval(() => {
+      if (isCancelled() || controller.signal.aborted) return;
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      const idleSec = Math.floor((Date.now() - lastEventReceivedAt) / 1000);
+      if (idleSec >= 3 && !responseDraft.trim()) {
+        updateProgress(`${lastStepText}\nModel: ${modelLabel(settings.model)}\n⏱️ Elapsed: ${elapsedSec}s (working...)`);
+      }
+    }, 2500);
+
     const result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
       ...settings,
+      signal: controller.signal,
       imagePath: job.imagePath,
       documentPath: job.documentPath,
       documentName: job.documentName,
       onEvent: (event: StreamEvent) => {
+        lastEventReceivedAt = Date.now();
         const step = event.step_update as Record<string, unknown> | undefined;
         const textDelta = typeof step?.text_delta === "string" ? step.text_delta : "";
         if (textDelta) responseDraft += textDelta;
         const update = formatStepUpdate(step);
+        if (update) lastStepText = update;
         if (responseDraft.trim()) {
           const draft = responseDraft.length > 3000 ? `...${responseDraft.slice(-3000)}` : responseDraft;
           updateProgress(`AGY is responding...\nModel: ${modelLabel(settings.model)}\n\n${draft}`);
@@ -886,12 +999,20 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
 
     await progressUpdate;
     if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`);
+    await detectAndSendGeneratedImages(job.chatId, result, effectiveConvId, startedAt);
     if (result.text.length > config.telegram.maxMessageChars * 2) await telegram.sendDocument(job.chatId, `agy-${job.id}.md`, result.text);
     else await replyWithFormattedResponse(job.chatId, result.text, createMainKeyboard(settingsFor(job.chatId)));
   } catch (error) {
-    if (!isCancelled()) { if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined); await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId))); }
+    if (isCancelled() || controller.signal.aborted || (error instanceof Error && error.message.includes("cancelled"))) {
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, "⛔ Request cancelled by user.").catch(() => undefined);
+    } else {
+      if (progressMessage) await telegram.editMessageText(job.chatId, progressMessage.message_id, `AGY failed: ${(error as Error).message}`).catch(() => undefined);
+      await reply(job.chatId, `AGY failed: ${(error as Error).message}`, createMainKeyboard(settingsFor(job.chatId)));
+    }
   } finally {
+    clearInterval(heartbeatTimer);
     controllers.delete(`prompt:${job.chatId}`);
+    sentImagePathsByChat.delete(String(job.chatId));
     if (job.imagePath) {
       await fs.unlink(job.imagePath).catch(() => undefined);
     }

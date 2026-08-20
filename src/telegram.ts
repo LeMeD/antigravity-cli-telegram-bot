@@ -48,6 +48,26 @@ export class TelegramClient {
     if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
     return body.result;
   }
+  public async sendPhoto(chatId: ChatId, photoPath: string | Buffer, caption?: string, parseMode?: TelegramParseMode, mimeType?: string): Promise<unknown> {
+    const form = new FormData();
+    form.append("chat_id", String(chatId));
+    if (typeof photoPath === "string") {
+      const fileBuffer = await fs.readFile(photoPath);
+      const filename = path.basename(photoPath);
+      const ext = path.extname(photoPath).toLowerCase();
+      const detectedMime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+      form.append("photo", new Blob([new Uint8Array(fileBuffer)], { type: detectedMime }), filename);
+    } else {
+      const mime = mimeType || "image/png";
+      form.append("photo", new Blob([new Uint8Array(photoPath)], { type: mime }), `image.${mime.split("/")[1] || "png"}`);
+    }
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    if (parseMode) form.append("parse_mode", parseMode);
+    const response = await fetch(`${this.root}/sendPhoto`, { method: "POST", body: form });
+    const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
+    if (!response.ok || !body.ok) throw new Error(`Telegram sendPhoto failed: ${body.description || response.status}`);
+    return body.result;
+  }
   public getFile(fileId: string): Promise<{ file_id: string; file_path?: string; file_size?: number }> {
     return this.call("getFile", { file_id: fileId });
   }
