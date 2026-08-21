@@ -65,8 +65,10 @@ test("parses stream events, response drafts, and usage", () => {
 test("normalizes usage and formats progress", () => {
   assert.deepEqual(normalizeUsage({ input_tokens: "5", output_tokens: -1, total_tokens: "bad" }), { input_tokens: 5 });
   assert.equal(normalizeUsage(null), null);
-  assert.equal(formatStepUpdate({ tool_info: { name: "run_command" } }), "Tool: run_command");
-  assert.equal(formatStepUpdate({ step_type: "agent_response" }), "Generating response...");
+  assert.equal(formatStepUpdate({ tool_info: { name: "run_command" } }), "⚙️ Running command...");
+  assert.equal(formatStepUpdate({ tool_info: { name: "run_command", parameters: { CommandLine: "npm test" } } }), "⚙️ Command: npm test");
+  assert.equal(formatStepUpdate({ tool_info: { name: "search_web", parameters: { query: "werecycle" } } }), "🔍 Web search: \"werecycle\"");
+  assert.equal(formatStepUpdate({ step_type: "agent_response" }), "💬 Generating response...");
 });
 
 test("runs a read-only AGY subcommand without Telegram secrets", async () => {

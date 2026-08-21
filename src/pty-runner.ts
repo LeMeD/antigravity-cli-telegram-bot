@@ -87,8 +87,16 @@ export function parseUsageQuota(rawOutput: string): string {
   const lines = ["📊 <b>Models & Quota</b>\n"];
   if (account) lines.push(`<b>Account:</b> <code>${account}</code>\n`);
 
-  if (gemini.weekly || gemini.fiveHour) {
-    lines.push("<b>Gemini Models</b>");
+  const hasGeminiLimits = Boolean(gemini.weekly || gemini.fiveHour);
+  const hasClaudeLimits = Boolean(claude.weekly || claude.fiveHour);
+  const isSharedPool =
+    hasGeminiLimits &&
+    hasClaudeLimits &&
+    gemini.weekly === claude.weekly &&
+    gemini.fiveHour === claude.fiveHour;
+
+  if (isSharedPool) {
+    lines.push("<b>Antigravity Quota (All Models)</b>");
     if (gemini.weekly) {
       lines.push(
         `• Weekly Limit: <b>${gemini.weekly}</b>${gemini.weeklyRefresh ? ` (Refreshes in ${gemini.weeklyRefresh})` : ""}`
@@ -99,30 +107,35 @@ export function parseUsageQuota(rawOutput: string): string {
         `• 5-Hour Limit: <b>${gemini.fiveHour}</b>${gemini.fiveHourRefresh ? ` (Refreshes in ${gemini.fiveHourRefresh})` : ""}`
       );
     }
-    lines.push("");
-  }
-
-  if (claude.weekly || claude.fiveHour) {
-    lines.push("<b>Claude & GPT Models</b>");
-    if (claude.weekly) {
-      lines.push(
-        `• Weekly Limit: <b>${claude.weekly}</b>${claude.weeklyRefresh ? ` (Refreshes in ${claude.weeklyRefresh})` : ""}`
-      );
+  } else {
+    if (hasGeminiLimits) {
+      lines.push("<b>Gemini Models</b>");
+      if (gemini.weekly) {
+        lines.push(
+          `• Weekly Limit: <b>${gemini.weekly}</b>${gemini.weeklyRefresh ? ` (Refreshes in ${gemini.weeklyRefresh})` : ""}`
+        );
+      }
+      if (gemini.fiveHour) {
+        lines.push(
+          `• 5-Hour Limit: <b>${gemini.fiveHour}</b>${gemini.fiveHourRefresh ? ` (Refreshes in ${gemini.fiveHourRefresh})` : ""}`
+        );
+      }
+      lines.push("");
     }
-    if (claude.fiveHour) {
-      lines.push(
-        `• 5-Hour Limit: <b>${claude.fiveHour}</b>${claude.fiveHourRefresh ? ` (Refreshes in ${claude.fiveHourRefresh})` : ""}`
-      );
-    }
-    lines.push("");
-  }
 
-  if (!account && !gemini.weekly && !gemini.fiveHour && !claude.weekly && !claude.fiveHour) {
-    const cleanLines = text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.includes("/usage") && !l.startsWith("❯") && !l.startsWith(">"));
-    lines.push(cleanLines.join("\n"));
+    if (hasClaudeLimits) {
+      lines.push("<b>Claude & GPT Models</b>");
+      if (claude.weekly) {
+        lines.push(
+          `• Weekly Limit: <b>${claude.weekly}</b>${claude.weeklyRefresh ? ` (Refreshes in ${claude.weeklyRefresh})` : ""}`
+        );
+      }
+      if (claude.fiveHour) {
+        lines.push(
+          `• 5-Hour Limit: <b>${claude.fiveHour}</b>${claude.fiveHourRefresh ? ` (Refreshes in ${claude.fiveHourRefresh})` : ""}`
+        );
+      }
+    }
   }
 
   return lines.join("\n").trim();

@@ -36,11 +36,42 @@ Five Hour Limit Remaining
   assert.match(parsed, /<b>Gemini Models<\/b>/);
   assert.match(parsed, /Weekly Limit: <b>94% remaining<\/b> \(Refreshes in 151h 15m\)/);
   assert.match(parsed, /5-Hour Limit: <b>81% remaining<\/b> \(Refreshes in 1h 52m\)/);
-  assert.match(parsed, /<b>Claude & GPT Models<\/b>/);
+  assert.match(parsed, /<b>Claude &amp; GPT Models<\/b>|<b>Claude & GPT Models<\/b>/);
   assert.match(parsed, /Weekly Limit: <b>100% Quota available<\/b>/);
   assert.match(parsed, /5-Hour Limit: <b>100% Quota available<\/b>/);
   // Ensure progress bar characters are NOT captured
   assert.doesNotMatch(parsed, /[█░▒▓]/);
+});
+
+test("parseUsageQuota consolidates identical shared quotas into Antigravity Quota (All Models)", () => {
+  const sharedSample = `
+Models & Quota
+Account: dev@example.com
+
+GEMINI MODELS
+Weekly Limit Remaining
+████████████░░░░░░ 68% remaining
+Refreshes in 120h 25m
+
+Five Hour Limit Remaining
+██████████████████ 100% remaining
+Refreshes in 4h 58m
+
+CLAUDE AND GPT MODELS
+Weekly Limit Remaining
+████████████░░░░░░ 68% remaining
+Refreshes in 120h 25m
+
+Five Hour Limit Remaining
+██████████████████ 100% remaining
+Refreshes in 4h 58m
+`;
+
+  const parsed = parseUsageQuota(sharedSample);
+  assert.match(parsed, /<b>Antigravity Quota \(All Models\)<\/b>/);
+  assert.match(parsed, /Weekly Limit: <b>68% remaining<\/b> \(Refreshes in 120h 25m\)/);
+  assert.match(parsed, /5-Hour Limit: <b>100% remaining<\/b> \(Refreshes in 4h 58m\)/);
+  assert.doesNotMatch(parsed, /Gemini Models/);
 });
 
 test("parseUsageQuota rejects startup / trust screen without quota data", () => {

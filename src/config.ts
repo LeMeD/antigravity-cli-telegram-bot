@@ -32,6 +32,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       token, allowedUserIds, allowedChatIds: numericCsvFrom(env, "TELEGRAM_ALLOWED_CHAT_IDS"),
       privateOnly: booleanFrom(env, "TELEGRAM_PRIVATE_ONLY", true),
       maxMessageChars: positiveIntegerFrom(env, "TELEGRAM_MAX_MESSAGE_CHARS", 3900),
+      progressMode: progressModeFrom(env),
+      verbose: verboseFrom(env),
+      allowBotUpdate: booleanFrom(env, "ALLOW_BOT_UPDATE", booleanFrom(env, "TELEGRAM_ALLOW_BOT_UPDATE", false)),
+      autoInterrupt: booleanFrom(env, "TELEGRAM_AUTO_INTERRUPT", false),
     },
     agy: {
       bin: (env.AGY_BIN || "/root/.local/bin/agy").trim(), workspace, project: (env.AGY_PROJECT || "").trim(), mode,
@@ -50,6 +54,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
 export function isMode(value: string): value is "plan" | "accept-edits" { return value === "plan" || value === "accept-edits"; }
 export function isEffort(value: string): value is "low" | "medium" | "high" { return value === "low" || value === "medium" || value === "high"; }
+export function isVerbose(value: string): value is "silent" | "compact" | "detailed" { return value === "silent" || value === "compact" || value === "detailed"; }
 
 function modelsFrom(env: Record<string, string | undefined>): string[] {
   const configured = (env.AGY_ALLOWED_MODELS || "").split(",").map((value) => value.trim()).filter(Boolean);
@@ -81,3 +86,22 @@ function booleanFrom(env: Record<string, string | undefined>, name: string, fall
   if (["0", "false", "no", "off"].includes(raw.toLowerCase())) return false;
   throw new Error(`${name} must be a boolean value`);
 }
+
+function progressModeFrom(env: Record<string, string | undefined>): "full" | "compact" | "delete" {
+  const raw = env.TELEGRAM_PROGRESS_MODE?.trim().toLowerCase();
+  if (!raw) return "full";
+  if (["delete", "remove", "off", "none", "clean"].includes(raw)) return "delete";
+  if (["compact", "short", "simple", "minimal", "1line"].includes(raw)) return "compact";
+  if (["full", "verbose", "all", "on"].includes(raw)) return "full";
+  throw new Error(`TELEGRAM_PROGRESS_MODE must be 'delete', 'compact', or 'full' (received: ${raw})`);
+}
+
+function verboseFrom(env: Record<string, string | undefined>): "silent" | "compact" | "detailed" {
+  const raw = (env.TELEGRAM_VERBOSE || env.AGY_VERBOSE)?.trim().toLowerCase();
+  if (!raw) return "detailed";
+  if (["silent", "quiet", "off", "none", "minimal", "low"].includes(raw)) return "silent";
+  if (["compact", "simple", "medium", "normal", "1line"].includes(raw)) return "compact";
+  if (["detailed", "verbose", "full", "high", "all", "on"].includes(raw)) return "detailed";
+  throw new Error(`TELEGRAM_VERBOSE must be 'silent', 'compact', or 'detailed' (received: ${raw})`);
+}
+

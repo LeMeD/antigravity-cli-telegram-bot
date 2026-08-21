@@ -42,6 +42,7 @@ export interface SessionSettings {
   outputFormat?: "text" | "json" | "stream-json";
   printTimeout?: string | null;
   dangerouslySkipPermissions?: boolean;
+  verbose?: "silent" | "compact" | "detailed";
 }
 
 export interface Usage {
@@ -81,7 +82,16 @@ export interface ConversationSummary {
   project_id?: string;
 }
 
-export interface PersistedState { updateOffset: number; sessions: Record<string, SessionState> }
+export interface InFlightJob {
+  prompt?: string;
+  startedAt: number;
+}
+
+export interface PersistedState {
+  updateOffset: number;
+  sessions: Record<string, SessionState>;
+  inFlight?: Record<string, InFlightJob>;
+}
 
 export interface AgyConfig {
   bin: string;
@@ -101,7 +111,17 @@ export interface AgyConfig {
 }
 
 export interface AppConfig {
-  telegram: { token: string; allowedUserIds: string[]; allowedChatIds: string[]; privateOnly: boolean; maxMessageChars: number };
+  telegram: {
+    token: string;
+    allowedUserIds: string[];
+    allowedChatIds: string[];
+    privateOnly: boolean;
+    maxMessageChars: number;
+    progressMode: "full" | "compact" | "delete";
+    verbose: "silent" | "compact" | "detailed";
+    allowBotUpdate: boolean;
+    autoInterrupt: boolean;
+  };
   agy: AgyConfig;
   queue: { maxSize: number };
   stateFile: string;
