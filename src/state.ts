@@ -25,15 +25,7 @@ export class StateStore {
 
   public session(chatId: ChatId): SessionState | null { return this.data.sessions[String(chatId)] || null; }
   public async resetSession(chatId: ChatId): Promise<void> {
-    const existing = this.data.sessions[String(chatId)];
-    if (existing?.settings) {
-      this.data.sessions[String(chatId)] = {
-        settings: existing.settings,
-        updatedAt: new Date().toISOString(),
-      };
-    } else {
-      delete this.data.sessions[String(chatId)];
-    }
+    delete this.data.sessions[String(chatId)];
     await this.save();
   }
   public async setSession(chatId: ChatId, session: SessionState): Promise<void> {

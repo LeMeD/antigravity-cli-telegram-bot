@@ -46,7 +46,7 @@ Five Hour Limit Remaining
 test("parseUsageQuota consolidates identical shared quotas into Antigravity Quota (All Models)", () => {
   const sharedSample = `
 Models & Quota
-Account: stephan.bolten@gmail.com
+Account: dev@example.com
 
 GEMINI MODELS
 Weekly Limit Remaining
