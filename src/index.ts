@@ -1037,6 +1037,13 @@ async function handleCommand(message: TelegramMessage, command: string, args: st
     enqueueJob(chatId, { prompt: promptText, kind: "prompt" });
     return true;
   }
+  if (command === "/compact") {
+    const promptText = args.length > 0
+      ? `Please compact the conversation context: ${args.join(" ")}`
+      : "Please compact our conversation context by consolidating vital state, active goals, decisions, and modified files internally, discarding temporary logs, and providing a concise token savings summary.";
+    enqueueJob(chatId, { prompt: promptText, kind: "prompt" });
+    return true;
+  }
   if (command === "/agy-confirm") { const pending = pendingDangerousCommands.get(String(chatId)); if (!pending) await reply(chatId, "There is no pending dangerous AGY command.", createMainKeyboard(settingsFor(chatId))); else await runCustomAgy(chatId, pending, true); return true; }
   return false;
 }
@@ -1274,7 +1281,14 @@ async function processJob(job: QueueJob, isCancelled: () => boolean): Promise<vo
 
     let result;
     try {
-      await state.setInFlight(job.chatId, { prompt: job.prompt, startedAt: Date.now() });
+      await state.setInFlight(job.chatId, {
+        prompt: job.prompt,
+        kind: job.kind,
+        imagePath: job.imagePath,
+        documentPath: job.documentPath,
+        documentName: job.documentName,
+        startedAt: Date.now(),
+      });
       result = await runAgy(config.agy, job.prompt || "", session?.conversationId || null, {
         ...settings,
         signal: controller.signal,
@@ -1461,6 +1475,10 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       return;
     }
     if (buttonText === "🤖 Model") { await reply(message.chat.id, "Select a model:", modelKeyboard(message.chat.id)); return; }
+    if (buttonText === "📊 Quota" || buttonText === "📊 Usage / Quota" || buttonText === "📊 Usage") {
+      enqueueJob(message.chat.id, { kind: "usage" });
+      return;
+    }
     if (buttonText.startsWith("⚙ Mode:")) { const settings = settingsFor(message.chat.id); settings.mode = settings.mode === "plan" ? "accept-edits" : "plan"; await saveSettings(message.chat.id, settings); await reply(message.chat.id, `Mode changed to ${settings.mode}.`, createMainKeyboard(settings)); return; }
     if (buttonText.startsWith("📢 Verbose:") || buttonText.startsWith("📢 Verbose")) {
       const settings = settingsFor(message.chat.id);
@@ -1499,6 +1517,7 @@ async function main(): Promise<void> {
     { command: "verbose", description: "Show or change verbose level (detailed, compact, silent)" },
     { command: "session", description: "Show session settings" },
     { command: "learn", description: "Learn reusable rules/skills from recent chat" },
+    { command: "compact", description: "Compact context and create state snapshot to save tokens" },
     { command: "help", description: "Show available commands" },
     { command: "agents", description: "List available AGY agents" },
     { command: "agent", description: "Select an AGY agent" },
@@ -1553,13 +1572,30 @@ async function main(): Promise<void> {
   if (Object.keys(interrupted).length > 0) {
     await state.clearAllInFlight();
     for (const [chatId, job] of Object.entries(interrupted)) {
-      const promptSnippet = job.prompt ? ` (Last prompt: <i>"${escapeHtml(job.prompt.slice(0, 50))}${job.prompt.length > 50 ? "..." : ""}"</i>)` : "";
-      await telegram.sendMessage(
-        chatId,
-        `⚡ <b>AGY Gateway restarted</b>\n\nThe service was restarted during your previous request${promptSnippet}.\nI am back online and ready for your next command!`,
-        createMainKeyboard(settingsFor(chatId)),
-        "HTML"
-      ).catch(() => undefined);
+      if (job.prompt || job.kind === "usage" || job.kind === "credits" || job.kind === "context") {
+        const promptSnippet = job.prompt ? ` (Prompt: <i>"${escapeHtml(job.prompt.slice(0, 60))}${job.prompt.length > 60 ? "..." : ""}"</i>)` : "";
+        await telegram.sendMessage(
+          chatId,
+          `⚡ <b>AGY Gateway restarted</b>\n\nYour previous request was interrupted by a restart${promptSnippet}.\n<i>Resuming execution now...</i>`,
+          createMainKeyboard(settingsFor(chatId)),
+          "HTML"
+        ).catch(() => undefined);
+
+        enqueueJob(chatId, {
+          kind: job.kind || "prompt",
+          prompt: job.prompt,
+          imagePath: job.imagePath,
+          documentPath: job.documentPath,
+          documentName: job.documentName,
+        });
+      } else {
+        await telegram.sendMessage(
+          chatId,
+          `⚡ <b>AGY Gateway restarted</b>\n\nI am back online and ready for your next command!`,
+          createMainKeyboard(settingsFor(chatId)),
+          "HTML"
+        ).catch(() => undefined);
+      }
     }
   }
 

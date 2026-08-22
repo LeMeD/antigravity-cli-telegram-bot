@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { escapeHtml, findReferencedMediaFiles, formatTelegramHtml, formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml } from "../src/telegram.js";
+import { cleanLatexMath, escapeHtml, executeWithRetry, findReferencedMediaFiles, formatTelegramHtml, formatTelegramHtmlChunks, isRetryableNetworkError, sanitizeLatexExpressions, splitMessage, splitPreformattedHtml, TelegramApiError, TelegramClient } from "../src/telegram.js";
 import { createMainKeyboard } from "../src/keyboards.js";
 
 test("splitPreformattedHtml preserves HTML tags without double escaping", () => {
@@ -18,17 +18,12 @@ test("splitPreformattedHtml preserves HTML tags without double escaping", () => 
 
 test("splits Telegram messages near line boundaries", () => { const chunks = splitMessage("one\ntwo\nthree\nfour", 8); assert.deepEqual(chunks, ["one\ntwo", "three", "four"]); assert.ok(chunks.every((chunk) => chunk.length <= 8)); });
 
-test("builds a persistent new session, model, and verbose reply keyboard beside the input", () => {
+test("builds a persistent new session, model, and quota reply keyboard beside the input", () => {
   const keyboard = createMainKeyboard({ model: "gemini-3.6-flash-high", effort: "high", mode: "plan", sandbox: true, verbose: "detailed" });
-  assert.deepEqual(keyboard.keyboard, [["✨ New session", "🤖 Model", "📢 Verbose: det"]]);
+  assert.deepEqual(keyboard.keyboard, [["✨ New session", "🤖 Model", "📊 Quota"]]);
   assert.equal(keyboard.resize_keyboard, true);
   assert.equal(keyboard.is_persistent, true);
   assert.equal("inline_keyboard" in keyboard, false);
-});
-
-test("labels compact verbose in the persistent keyboard", () => {
-  const keyboard = createMainKeyboard({ model: null, effort: "medium", mode: "accept-edits", sandbox: true, verbose: "compact" });
-  assert.deepEqual(keyboard.keyboard, [["✨ New session", "🤖 Model", "📢 Verbose: comp"]]);
 });
 
 test("formats AGY Markdown-like responses as safe Telegram HTML", () => {
@@ -42,7 +37,7 @@ test("formats AGY Markdown-like responses as safe Telegram HTML", () => {
   assert.doesNotMatch(html, /<script|<img/);
 });
 
-test("converts markdown tables to aligned monospace codeblocks in Telegram HTML", () => {
+test("converts markdown tables to mobile-friendly structured cards in Telegram HTML", () => {
   const markdown = `Here is a table:
 
 | Component / Service | Category | Status / Purpose |
@@ -55,9 +50,22 @@ End of table.`;
 
   const html = formatTelegramHtml(markdown);
   assert.match(html, /Here is a table:/);
-  assert.match(html, /<pre><code class="language-text">Component \/ Service\s+Category\s+Status \/ Purpose\n─+\nAPI Gateway\s+Networking\s+Entry point &amp; routing\nDatabase\s+Storage\s+State management &amp; logs\nWorker Node\s+Compute\s+Background job processor<\/code><\/pre>/);
+  assert.match(html, /🔹 <b>API Gateway<\/b>/);
+  assert.match(html, /▫️ <i>Category:<\/i> Networking/);
+  assert.match(html, /▫️ <i>Status \/ Purpose:<\/i> Entry point &amp; routing/);
   assert.match(html, /End of table\./);
-  assert.doesNotMatch(html, /\| \*\*API Gateway\*\*/);
+  assert.doesNotMatch(html, /<pre><code/);
+});
+
+test("converts 2-column markdown tables to clean key-value lists in Telegram HTML", () => {
+  const markdown = `| Key | Value |
+| :--- | :--- |
+| **CPU** | 8 Cores |
+| **RAM** | 16 GB |`;
+
+  const html = formatTelegramHtml(markdown);
+  assert.match(html, /• <b>CPU:<\/b> 8 Cores/);
+  assert.match(html, /• <b>RAM:<\/b> 16 GB/);
 });
 
 test("keeps long responses formatted while chunking under Telegram limits", () => {
@@ -114,5 +122,141 @@ test("formatTelegramHtmlChunks cleans local image markdown paths and formats cap
   assert.ok(!chunks[0].includes("/tmp/another.jpg"));
   assert.ok(chunks[0].includes("🖼 <i>Henrik mit Führerausweis</i>"));
   assert.ok(chunks[0].includes('🖼 <a href="https://example.com/chart.png">Chart</a>'));
+});
+
+test("formats blockquotes and GitHub-style alerts into native Telegram blockquotes", () => {
+  const markdown = "> [!TIP]\n> This is a helpful tip\n> with multiple lines\n\n> [!WARNING]\n> High battery temperature\n\n> Standard quoted text";
+  const html = formatTelegramHtml(markdown);
+  assert.ok(html.includes("<blockquote>💡 <b>Tip</b>\nThis is a helpful tip\nwith multiple lines</blockquote>"));
+  assert.ok(html.includes("<blockquote>⚠️ <b>Warning</b>\nHigh battery temperature</blockquote>"));
+  assert.ok(html.includes("<blockquote>Standard quoted text</blockquote>"));
+});
+
+test("formats interactive checkboxes and hierarchical nested lists", () => {
+  const markdown = "- [ ] Pending task\n- [x] Completed task\n- Top level bullet\n  - Sub bullet level 2\n    - Deep bullet level 3";
+  const html = formatTelegramHtml(markdown);
+  assert.match(html, /⬜ Pending task/);
+  assert.match(html, /✅ Completed task/);
+  assert.match(html, /• Top level bullet/);
+  assert.match(html, /  ▫️ Sub bullet level 2/);
+  assert.match(html, /    – Deep bullet level 3/);
+});
+
+test("formats markdown horizontal dividers into clean unicode dividers", () => {
+  const markdown = "Section 1\n\n---\n\nSection 2";
+  const html = formatTelegramHtml(markdown);
+  assert.match(html, /Section 1\n\n───────────────\n\nSection 2/);
+});
+
+test("isRetryableNetworkError identifies transient network failures and 5xx / 429 errors", () => {
+  assert.equal(isRetryableNetworkError(new TypeError("fetch failed")), true);
+  assert.equal(isRetryableNetworkError(new Error("read ECONNRESET")), true);
+  assert.equal(isRetryableNetworkError(new Error("connect ETIMEDOUT")), true);
+  assert.equal(isRetryableNetworkError(new Error("getaddrinfo ENOTFOUND api.telegram.org")), true);
+  assert.equal(isRetryableNetworkError(new Error("socket hang up")), true);
+  assert.equal(isRetryableNetworkError(new TelegramApiError("Bad Gateway", 502)), true);
+  assert.equal(isRetryableNetworkError(new TelegramApiError("Gateway Timeout", 504)), true);
+  assert.equal(isRetryableNetworkError(new TelegramApiError("Too Many Requests", 429, 5)), true);
+
+  // Non-retryable
+  assert.equal(isRetryableNetworkError(new TelegramApiError("Bad Request: chat not found", 400)), false);
+  assert.equal(isRetryableNetworkError(new TelegramApiError("Forbidden: bot was blocked by the user", 403)), false);
+  assert.equal(isRetryableNetworkError(new Error("Something arbitrary")), false);
+});
+
+test("executeWithRetry succeeds on first attempt without retrying", async () => {
+  let attempts = 0;
+  const result = await executeWithRetry(async () => {
+    attempts += 1;
+    return "success";
+  }, { initialDelayMs: 5 });
+  assert.equal(result, "success");
+  assert.equal(attempts, 1);
+});
+
+test("executeWithRetry retries on transient network error (fetch failed) and succeeds", async () => {
+  let attempts = 0;
+  const result = await executeWithRetry(async () => {
+    attempts += 1;
+    if (attempts < 3) {
+      throw new TypeError("fetch failed");
+    }
+    return "recovered";
+  }, { maxRetries: 3, initialDelayMs: 5 });
+  assert.equal(result, "recovered");
+  assert.equal(attempts, 3);
+});
+
+test("executeWithRetry throws immediately on non-retryable error without retrying", async () => {
+  let attempts = 0;
+  await assert.rejects(async () => {
+    await executeWithRetry(async () => {
+      attempts += 1;
+      throw new TelegramApiError("Bad Request: message is not modified", 400);
+    }, { maxRetries: 3, initialDelayMs: 5 });
+  }, /message is not modified/);
+  assert.equal(attempts, 1);
+});
+
+test("executeWithRetry stops after maxRetries if network error persists", async () => {
+  let attempts = 0;
+  await assert.rejects(async () => {
+    await executeWithRetry(async () => {
+      attempts += 1;
+      throw new TypeError("fetch failed");
+    }, { maxRetries: 2, initialDelayMs: 5 });
+  }, /fetch failed/);
+  assert.equal(attempts, 3); // initial attempt + 2 retries
+});
+
+test("executeWithRetry aborts immediately if AbortSignal is cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let attempts = 0;
+  await assert.rejects(async () => {
+    await executeWithRetry(async () => {
+      attempts += 1;
+      return "done";
+    }, { signal: controller.signal, initialDelayMs: 5 });
+  }, /Request cancelled/);
+  assert.equal(attempts, 0);
+});
+
+test("cleanLatexMath converts common LaTeX expressions, symbols, and formatting into clean Unicode text", () => {
+  assert.equal(cleanLatexMath("22\\,\\%"), "22 %");
+  assert.equal(cleanLatexMath("69{,}5\\,\\text{h}"), "69,5 h");
+  assert.equal(cleanLatexMath("0{,}316\\,\\%"), "0,316 %");
+  assert.equal(cleanLatexMath("\\rightarrow"), "→");
+  assert.equal(cleanLatexMath("\\approx 15\\,\\text{km}"), "≈ 15 km");
+  assert.equal(cleanLatexMath("E = mc^2"), "E = mc²");
+  assert.equal(cleanLatexMath("\\frac{a + b}{c}"), "(a + b)/(c)");
+  assert.equal(cleanLatexMath("\\sqrt{x^2 + y^2}"), "√(x² + y²)");
+  assert.equal(cleanLatexMath("\\alpha + \\beta \\le \\gamma"), "α + β ≤ γ");
+  assert.equal(cleanLatexMath("\\pm 5\\%"), "± 5%");
+});
+
+test("formatTelegramHtml cleans LaTeX math in LLM responses while preserving code and dollar amounts", () => {
+  const markdown = `### 2. Das 22%-Budget über ~70 Stunden
+Bei $22\\,\\%$ Restmenge über $69{,}5\\,\\text{h}$:
+* **Erlaubter Verbrauch:** maximal $0{,}316\\,\\%$ pro Stunde (bzw. $7{,}6\\,\\%$ pro Tag).
+
+| Scenario | Detail |
+| :--- | :--- |
+| **Sentry Mode** | Verbraucht ca. 5–10 % / Tag $\\rightarrow$ nach 2–3 Tagen leer. |
+
+Preis liegt bei $10 und $20.
+Inline code: \`$22\\,\\%\` und \`\\rightarrow\` bleiben unverändert.`;
+
+  const html = formatTelegramHtml(markdown);
+
+  assert.match(html, /<b>2\. Das 22%-Budget über ~70 Stunden<\/b>/);
+  assert.match(html, /Bei 22 % Restmenge über 69,5 h:/);
+  assert.match(html, /• <b>Erlaubter Verbrauch:<\/b> maximal 0,316 % pro Stunde \(bzw\. 7,6 % pro Tag\)\./);
+  assert.match(html, /Verbraucht ca\. 5–10 % \/ Tag → nach 2–3 Tagen leer\./);
+  assert.match(html, /Preis liegt bei \$10 und \$20\./);
+  assert.match(html, /<code>\$22\\,\\%<\/code>/);
+  assert.match(html, /<code>\\rightarrow<\/code>/);
+  assert.doesNotMatch(html, /Bei \$22/);
+  assert.doesNotMatch(html, /69\{,\}5/);
 });
 

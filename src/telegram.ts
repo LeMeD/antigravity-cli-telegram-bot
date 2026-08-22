@@ -6,14 +6,126 @@ import type { ChatId, InlineKeyboardMarkup, ReplyMarkup, TelegramUpdate } from "
 const API_ROOT = (token: string): string => `https://api.telegram.org/bot${token}`;
 export type TelegramParseMode = "HTML";
 
+export class TelegramApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly statusCode?: number,
+    public readonly retryAfter?: number
+  ) {
+    super(message);
+    this.name = "TelegramApiError";
+  }
+}
+
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("Request cancelled"));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("Request cancelled"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export function isRetryableNetworkError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof TelegramApiError) {
+    if (error.statusCode === 429) return true;
+    if (error.statusCode && error.statusCode >= 500 && error.statusCode <= 599) return true;
+    return false;
+  }
+  if (error instanceof Error) {
+    if (error.name === "AbortError") return false;
+    const msg = error.message.toLowerCase();
+    if (
+      msg.includes("fetch failed") ||
+      msg.includes("econnreset") ||
+      msg.includes("econnrefused") ||
+      msg.includes("etimedout") ||
+      msg.includes("enotfound") ||
+      msg.includes("ehostunreach") ||
+      msg.includes("enetunreach") ||
+      msg.includes("eai_again") ||
+      msg.includes("socket hang up") ||
+      msg.includes("timeout") ||
+      msg.includes("und_err")
+    ) {
+      return true;
+    }
+    if (error.name === "TypeError" && msg.includes("fetch")) return true;
+  }
+  return false;
+}
+
+export interface RetryOptions {
+  maxRetries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function executeWithRetry<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const maxRetries = options.maxRetries ?? 3;
+  const initialDelayMs = options.initialDelayMs ?? 500;
+  const maxDelayMs = options.maxDelayMs ?? 5000;
+  const signal = options.signal;
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    if (signal?.aborted) {
+      throw new Error("Request cancelled");
+    }
+
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      if (attempt === maxRetries || !isRetryableNetworkError(error)) {
+        throw error;
+      }
+
+      let delayMs = Math.min(maxDelayMs, initialDelayMs * 2 ** attempt) + Math.floor(Math.random() * 150);
+      if (error instanceof TelegramApiError && typeof error.retryAfter === "number" && error.retryAfter > 0) {
+        delayMs = Math.min(maxDelayMs, error.retryAfter * 1000);
+      }
+
+      await sleep(delayMs, signal);
+    }
+  }
+
+  throw lastError;
+}
+
 export class TelegramClient {
   private readonly root: string;
   public constructor(private readonly token: string) { this.root = API_ROOT(token); }
   public async call<T>(method: string, payload: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
-    const response = await fetch(`${this.root}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal });
-    const body = await response.json() as { ok: boolean; result?: T; description?: string };
-    if (!response.ok || !body.ok) throw new Error(`Telegram ${method} failed: ${body.description || response.status}`);
-    return body.result as T;
+    return executeWithRetry(async () => {
+      const response = await fetch(`${this.root}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal });
+      const body = await response.json() as { ok: boolean; result?: T; description?: string; error_code?: number; parameters?: { retry_after?: number } };
+      if (!response.ok || !body.ok) {
+        throw new TelegramApiError(
+          `Telegram ${method} failed: ${body.description || response.status}`,
+          body.error_code || response.status,
+          body.parameters?.retry_after
+        );
+      }
+      return body.result as T;
+    }, { signal });
   }
   public getUpdates(offset: number, signal?: AbortSignal): Promise<TelegramUpdate[]> { return this.call("getUpdates", { offset, timeout: 30, allowed_updates: ["message", "callback_query"] }, signal); }
   public sendMessage(chatId: ChatId, text: string, replyMarkup?: ReplyMarkup, parseMode?: TelegramParseMode): Promise<{ message_id: number }> {
@@ -49,66 +161,92 @@ export class TelegramClient {
   public answerCallbackQuery(callbackQueryId: string, text?: string): Promise<boolean> { return this.call<boolean>("answerCallbackQuery", { callback_query_id: callbackQueryId, ...(text ? { text } : {}) }); }
   public setMyCommands(commands: Array<{ command: string; description: string }>): Promise<boolean> { return this.call<boolean>("setMyCommands", { commands }); }
   public sendChatAction(chatId: ChatId, action = "typing"): Promise<boolean> { return this.call<boolean>("sendChatAction", { chat_id: chatId, action }); }
-  public async sendDocument(chatId: ChatId, filename: string, content: string): Promise<unknown> {
-    const form = new FormData(); form.append("chat_id", String(chatId)); form.append("document", new Blob([content], { type: "text/markdown" }), filename);
-    const response = await fetch(`${this.root}/sendDocument`, { method: "POST", body: form });
-    const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
-    if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
-    return body.result;
+  public async sendDocument(chatId: ChatId, filename: string, content: string, signal?: AbortSignal): Promise<unknown> {
+    return executeWithRetry(async () => {
+      const form = new FormData(); form.append("chat_id", String(chatId)); form.append("document", new Blob([content], { type: "text/markdown" }), filename);
+      const response = await fetch(`${this.root}/sendDocument`, { method: "POST", body: form, signal });
+      const body = await response.json() as { ok: boolean; result?: unknown; description?: string; error_code?: number; parameters?: { retry_after?: number } };
+      if (!response.ok || !body.ok) {
+        throw new TelegramApiError(
+          `Telegram sendDocument failed: ${body.description || response.status}`,
+          body.error_code || response.status,
+          body.parameters?.retry_after
+        );
+      }
+      return body.result;
+    }, { signal });
   }
-  public async sendPhoto(chatId: ChatId, photoPath: string | Buffer, caption?: string, parseMode?: TelegramParseMode, mimeType?: string, replyMarkup?: ReplyMarkup): Promise<unknown> {
-    const form = new FormData();
-    form.append("chat_id", String(chatId));
-    if (typeof photoPath === "string") {
-      const fileBuffer = await fs.readFile(photoPath);
-      const filename = path.basename(photoPath);
-      const ext = path.extname(photoPath).toLowerCase();
-      const detectedMime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
-      form.append("photo", new Blob([new Uint8Array(fileBuffer)], { type: detectedMime }), filename);
-    } else {
-      const mime = mimeType || "image/png";
-      form.append("photo", new Blob([new Uint8Array(photoPath)], { type: mime }), `image.${mime.split("/")[1] || "png"}`);
-    }
-    if (caption) {
-      form.append("caption", caption.slice(0, 1024));
-      if (parseMode) form.append("parse_mode", parseMode);
-    }
-    if (replyMarkup) {
-      form.append("reply_markup", JSON.stringify(replyMarkup));
-    }
-    const response = await fetch(`${this.root}/sendPhoto`, { method: "POST", body: form });
-    const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
-    if (!response.ok || !body.ok) throw new Error(`Telegram sendPhoto failed: ${body.description || response.status}`);
-    return body.result;
+  public async sendPhoto(chatId: ChatId, photoPath: string | Buffer, caption?: string, parseMode?: TelegramParseMode, mimeType?: string, replyMarkup?: ReplyMarkup, signal?: AbortSignal): Promise<unknown> {
+    return executeWithRetry(async () => {
+      const form = new FormData();
+      form.append("chat_id", String(chatId));
+      if (typeof photoPath === "string") {
+        const fileBuffer = await fs.readFile(photoPath);
+        const filename = path.basename(photoPath);
+        const ext = path.extname(photoPath).toLowerCase();
+        const detectedMime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+        form.append("photo", new Blob([new Uint8Array(fileBuffer)], { type: detectedMime }), filename);
+      } else {
+        const mime = mimeType || "image/png";
+        form.append("photo", new Blob([new Uint8Array(photoPath)], { type: mime }), `image.${mime.split("/")[1] || "png"}`);
+      }
+      if (caption) {
+        form.append("caption", caption.slice(0, 1024));
+        if (parseMode) form.append("parse_mode", parseMode);
+      }
+      if (replyMarkup) {
+        form.append("reply_markup", JSON.stringify(replyMarkup));
+      }
+      const response = await fetch(`${this.root}/sendPhoto`, { method: "POST", body: form, signal });
+      const body = await response.json() as { ok: boolean; result?: unknown; description?: string; error_code?: number; parameters?: { retry_after?: number } };
+      if (!response.ok || !body.ok) {
+        throw new TelegramApiError(
+          `Telegram sendPhoto failed: ${body.description || response.status}`,
+          body.error_code || response.status,
+          body.parameters?.retry_after
+        );
+      }
+      return body.result;
+    }, { signal });
   }
-  public async sendDocumentFile(chatId: ChatId, filePath: string, caption?: string, replyMarkup?: ReplyMarkup): Promise<unknown> {
-    const fileBuffer = await fs.readFile(filePath);
-    const form = new FormData();
-    form.append("chat_id", String(chatId));
-    form.append("document", new Blob([fileBuffer]), path.basename(filePath));
-    if (caption) {
-      form.append("caption", caption.slice(0, 1024));
-      form.append("parse_mode", "HTML");
-    }
-    if (replyMarkup) {
-      form.append("reply_markup", JSON.stringify(replyMarkup));
-    }
-    const response = await fetch(`${this.root}/sendDocument`, { method: "POST", body: form });
-    const body = await response.json() as { ok: boolean; result?: unknown; description?: string };
-    if (!response.ok || !body.ok) throw new Error(`Telegram sendDocument failed: ${body.description || response.status}`);
-    return body.result;
+  public async sendDocumentFile(chatId: ChatId, filePath: string, caption?: string, replyMarkup?: ReplyMarkup, signal?: AbortSignal): Promise<unknown> {
+    return executeWithRetry(async () => {
+      const fileBuffer = await fs.readFile(filePath);
+      const form = new FormData();
+      form.append("chat_id", String(chatId));
+      form.append("document", new Blob([new Uint8Array(fileBuffer)]), path.basename(filePath));
+      if (caption) {
+        form.append("caption", caption.slice(0, 1024));
+        form.append("parse_mode", "HTML");
+      }
+      if (replyMarkup) {
+        form.append("reply_markup", JSON.stringify(replyMarkup));
+      }
+      const response = await fetch(`${this.root}/sendDocument`, { method: "POST", body: form, signal });
+      const body = await response.json() as { ok: boolean; result?: unknown; description?: string; error_code?: number; parameters?: { retry_after?: number } };
+      if (!response.ok || !body.ok) {
+        throw new TelegramApiError(
+          `Telegram sendDocument failed: ${body.description || response.status}`,
+          body.error_code || response.status,
+          body.parameters?.retry_after
+        );
+      }
+      return body.result;
+    }, { signal });
   }
   public getFile(fileId: string): Promise<{ file_id: string; file_path?: string; file_size?: number }> {
     return this.call("getFile", { file_id: fileId });
   }
-  public async downloadFile(filePath: string, destination: string): Promise<string> {
-    const fileUrl = `https://api.telegram.org/file/bot${this.token}/${filePath}`;
-    const response = await fetch(fileUrl);
-    if (!response.ok) throw new Error(`Download file failed: ${response.statusText}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, buffer);
-    return destination;
+  public async downloadFile(filePath: string, destination: string, signal?: AbortSignal): Promise<string> {
+    return executeWithRetry(async () => {
+      const fileUrl = `https://api.telegram.org/file/bot${this.token}/${filePath}`;
+      const response = await fetch(fileUrl, { signal });
+      if (!response.ok) throw new TelegramApiError(`Download file failed: ${response.statusText}`, response.status);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, buffer);
+      return destination;
+    }, { signal });
   }
 }
 
@@ -200,6 +338,9 @@ function renderTelegramBlocks(text: string): string[] {
         codeLines = null;
         codeLanguage = "";
       } else {
+        if (output.length > 0 && output[output.length - 1] !== "") {
+          output.push("");
+        }
         codeLines = [];
         codeLanguage = fence[1] || "";
       }
@@ -207,6 +348,51 @@ function renderTelegramBlocks(text: string): string[] {
     }
     if (codeLines) {
       codeLines.push(line);
+      continue;
+    }
+
+    // Blockquote & GitHub Alerts
+    if (line.match(/^\s*>/)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].match(/^\s*>/)) {
+        quoteLines.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      i--; // loop will increment i
+
+      let alertHeader = "";
+      if (quoteLines.length > 0) {
+        const alertMatch = quoteLines[0].match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
+        if (alertMatch) {
+          const type = alertMatch[1].toUpperCase();
+          const rest = alertMatch[2];
+          const iconMap: Record<string, string> = {
+            NOTE: "ℹ️ <b>Note</b>",
+            TIP: "💡 <b>Tip</b>",
+            IMPORTANT: "📌 <b>Important</b>",
+            WARNING: "⚠️ <b>Warning</b>",
+            CAUTION: "🚨 <b>Caution</b>",
+          };
+          alertHeader = iconMap[type] || `📌 <b>${type}</b>`;
+          quoteLines.shift();
+          if (rest.trim()) {
+            quoteLines.unshift(rest.trim());
+          }
+        }
+      }
+
+      const formattedQuote = quoteLines.map((q) => formatInlineHtml(q)).join("\n");
+      const finalQuoteHtml = alertHeader
+        ? `<blockquote>${alertHeader}\n${formattedQuote}</blockquote>`
+        : `<blockquote>${formattedQuote}</blockquote>`;
+
+      if (output.length > 0 && output[output.length - 1] !== "") {
+        output.push("");
+      }
+      output.push(finalQuoteHtml);
+      if (i + 1 < lines.length && lines[i + 1].trim() !== "") {
+        output.push("");
+      }
       continue;
     }
 
@@ -220,7 +406,13 @@ function renderTelegramBlocks(text: string): string[] {
       }
       const renderedTable = formatMarkdownTable(tableLines);
       if (renderedTable) {
+        if (output.length > 0 && output[output.length - 1] !== "") {
+          output.push("");
+        }
         output.push(renderedTable);
+        if (j < lines.length && lines[j].trim() !== "") {
+          output.push("");
+        }
         i = j - 1;
         continue;
       }
@@ -228,23 +420,52 @@ function renderTelegramBlocks(text: string): string[] {
 
     const divider = line.match(/^\s*[-*_]{3,}\s*$/);
     if (divider) {
-      output.push("");
+      if (output.length > 0 && output[output.length - 1] !== "") {
+        output.push("");
+      }
+      output.push("───────────────");
+      if (i + 1 < lines.length && lines[i + 1].trim() !== "") {
+        output.push("");
+      }
       continue;
     }
 
     const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     if (heading) {
+      if (output.length > 0 && output[output.length - 1] !== "") {
+        output.push("");
+      }
       output.push(`<b>${formatInlineHtml(heading[1])}</b>`);
       continue;
     }
-    const bullet = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (bullet) {
-      output.push(`• ${formatInlineHtml(bullet[1])}`);
+
+    const checkbox = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.+)$/);
+    if (checkbox) {
+      const indentLevel = Math.min(3, Math.floor(checkbox[1].length / 2));
+      const indent = "  ".repeat(indentLevel);
+      const icon = checkbox[2].trim() ? "✅" : "⬜";
+      output.push(`${indent}${icon} ${formatInlineHtml(checkbox[3])}`);
       continue;
     }
+
+    const bullet = line.match(/^(\s*)[-*+]\s+(.+)$/);
+    if (bullet) {
+      const indentSpaces = bullet[1].length;
+      if (indentSpaces >= 4) {
+        output.push(`    – ${formatInlineHtml(bullet[2])}`);
+      } else if (indentSpaces >= 2) {
+        output.push(`  ▫️ ${formatInlineHtml(bullet[2])}`);
+      } else {
+        output.push(`• ${formatInlineHtml(bullet[2])}`);
+      }
+      continue;
+    }
+
     const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
     if (numbered) {
-      output.push(`${numbered[1]}. ${formatInlineHtml(numbered[2])}`);
+      const indentSpaces = numbered[1].length;
+      const indent = indentSpaces >= 2 ? "  " : "";
+      output.push(`${indent}${numbered[1]}. ${formatInlineHtml(numbered[2])}`);
       continue;
     }
     output.push(formatInlineHtml(line));
@@ -274,14 +495,16 @@ function parseMarkdownTableCells(line: string): string[] {
 }
 
 function cleanCellText(cell: string): string {
-  return cell
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .trim();
+  return sanitizeLatexExpressions(
+    cell
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/_([^_]+)_/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .trim()
+  );
 }
 
 function formatMarkdownTable(tableLines: string[]): string | null {
@@ -299,52 +522,239 @@ function formatMarkdownTable(tableLines: string[]): string | null {
   const rawRows = tableLines.filter((_, idx) => idx !== sepIndex).map(parseMarkdownTableCells);
   if (rawRows.length === 0) return null;
 
-  const cleanRows = rawRows.map((row) => row.map(cleanCellText));
-  const colCount = Math.max(...cleanRows.map((r) => r.length));
+  const headerRow = rawRows[0];
+  const colCount = Math.max(...rawRows.map((r) => r.length));
   if (colCount === 0) return null;
 
-  const colWidths = Array.from({ length: colCount }, (_, colIdx) =>
-    Math.max(
-      3,
-      ...cleanRows.map((row) => (row[colIdx] ? row[colIdx].length : 0))
-    )
-  );
+  const cardBlocks: string[] = [];
 
-  const formattedRows: string[] = [];
-  const headerRow = cleanRows[0];
-  const headerFormatted = colWidths
-    .map((width, colIdx) => (headerRow[colIdx] || "").padEnd(width))
-    .join("  ")
-    .trimEnd();
-  formattedRows.push(headerFormatted);
+  for (let r = 1; r < rawRows.length; r++) {
+    const row = rawRows[r];
+    if (row.every((c) => !c.trim())) continue;
 
-  const totalWidth = colWidths.reduce((sum, w) => sum + w, 0) + (colCount - 1) * 2;
-  formattedRows.push("─".repeat(Math.max(totalWidth, 10)));
-
-  for (let r = 1; r < cleanRows.length; r++) {
-    const row = cleanRows[r];
-    if (row.every((c) => !c)) continue;
-    const rowFormatted = colWidths
-      .map((width, colIdx) => (row[colIdx] || "").padEnd(width))
-      .join("  ")
-      .trimEnd();
-    formattedRows.push(rowFormatted);
+    if (colCount === 2) {
+      const key = formatInlineHtml(cleanCellText(row[0] || ""));
+      const val = formatInlineHtml(row[1] || "");
+      cardBlocks.push(`• <b>${key}:</b> ${val}`);
+    } else {
+      const primaryTitle = formatInlineHtml(cleanCellText(row[0] || (headerRow[0] ? `${headerRow[0]} ${r}` : `Item ${r}`)));
+      const lines: string[] = [`🔹 <b>${primaryTitle}</b>`];
+      for (let c = 1; c < colCount; c++) {
+        const colHeader = formatInlineHtml(cleanCellText(headerRow[c] || `Field ${c + 1}`));
+        const cellVal = formatInlineHtml(row[c] || "—");
+        lines.push(`  ▫️ <i>${colHeader}:</i> ${cellVal}`);
+      }
+      cardBlocks.push(lines.join("\n"));
+    }
   }
 
-  return `<pre><code class="language-text">${escapeHtml(formattedRows.join("\n"))}</code></pre>`;
+  return cardBlocks.join("\n\n");
 }
 
 function splitOversizedHtmlBlock(block: string, maxChars: number): string[] {
   const code = block.match(/^<pre><code( class="[^"]+")?>([\s\S]*)<\/code><\/pre>$/);
-  if (!code) return splitMessage(stripHtmlTags(block), maxChars).map(escapeHtml);
-  const open = `<pre><code${code[1] || ""}>`;
-  const close = "</code></pre>";
-  const contentLimit = Math.max(1, maxChars - open.length - close.length);
-  return splitMessage(code[2], contentLimit).map((part) => `${open}${part}${close}`);
+  if (code) {
+    const open = `<pre><code${code[1] || ""}>`;
+    const close = "</code></pre>";
+    const contentLimit = Math.max(1, maxChars - open.length - close.length);
+    return splitMessage(code[2], contentLimit).map((part) => `${open}${part}${close}`);
+  }
+  const quote = block.match(/^<blockquote>([\s\S]*)<\/blockquote>$/);
+  if (quote) {
+    const open = "<blockquote>";
+    const close = "</blockquote>";
+    const contentLimit = Math.max(1, maxChars - open.length - close.length);
+    return splitMessage(quote[1], contentLimit).map((part) => `${open}${part}${close}`);
+  }
+  return splitMessage(stripHtmlTags(block), maxChars).map(escapeHtml);
 }
 
 function stripHtmlTags(value: string): string {
   return value.replace(/<[^>]*>/g, "");
+}
+
+const GREEK_MAP: Record<string, string> = {
+  alpha: "α", beta: "β", gamma: "γ", Gamma: "Γ",
+  delta: "δ", Delta: "Δ", epsilon: "ε", varepsilon: "ε",
+  zeta: "ζ", eta: "η", theta: "θ", vartheta: "θ", Theta: "Θ",
+  iota: "ι", kappa: "κ", lambda: "λ", Lambda: "Λ",
+  mu: "µ", nu: "ν", xi: "ξ", Xi: "Ξ",
+  pi: "π", Pi: "Π", rho: "ρ", sigma: "σ", Sigma: "Σ",
+  tau: "τ", upsilon: "υ", phi: "φ", varphi: "φ", Phi: "Φ",
+  chi: "χ", psi: "ψ", Psi: "Ψ", omega: "ω", Omega: "Ω",
+};
+
+const SYMBOL_MAP: Record<string, string> = {
+  rightarrow: "→", to: "→", longrightarrow: "⟶",
+  leftarrow: "←", gets: "←", longleftarrow: "⟵",
+  Rightarrow: "⇒", Leftarrow: "⇐",
+  leftrightarrow: "↔", Leftrightarrow: "⇔", iff: "⇔",
+  uparrow: "↑", downarrow: "↓", mapsto: "↦",
+  approx: "≈", sim: "∼", simeq: "≃", cong: "≅",
+  neq: "≠", ne: "≠",
+  le: "≤", leq: "≤", ge: "≥", geq: "≥",
+  ll: "≪", gg: "≫",
+  pm: "±", mp: "∓",
+  times: "×", cdot: "·", div: "÷",
+  circ: "°", degree: "°",
+  infty: "∞",
+  in: "∈", notin: "∉", ni: "∋",
+  subset: "⊂", supset: "⊃", subseteq: "⊆", supseteq: "⊇",
+  cup: "∪", cap: "∩",
+  forall: "∀", exists: "∃", nexists: "∄",
+  nabla: "∇", partial: "∂",
+  sum: "∑", prod: "∏", int: "∫",
+  ldots: "…", cdots: "…", dots: "…",
+};
+
+const SUPERSCRIPT_MAP: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+  n: "ⁿ", i: "ⁱ",
+};
+
+const SUBSCRIPT_MAP: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+  "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+  a: "ₐ", e: "ₑ", h: "ₕ", i: "ᵢ", j: "ⱼ", k: "ₖ",
+  l: "ₗ", m: "ₘ", n: "ₙ", o: "ₒ", p: "ₚ", r: "ᵣ",
+  s: "ₛ", t: "ₜ", u: "ᵤ", v: "ᵥ", x: "ₓ",
+};
+
+function toSuperscript(str: string): string {
+  return str.split("").map((ch) => SUPERSCRIPT_MAP[ch] || ch).join("");
+}
+
+function toSubscript(str: string): string {
+  return str.split("").map((ch) => SUBSCRIPT_MAP[ch] || ch).join("");
+}
+
+function extractBracedArg(text: string, startIndex: number): { content: string; endIndex: number } | null {
+  if (text[startIndex] !== "{") return null;
+  let depth = 0;
+  const start = startIndex + 1;
+  for (let i = startIndex; i < text.length; i++) {
+    if (text[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        return { content: text.slice(start, i), endIndex: i };
+      }
+    }
+  }
+  return null;
+}
+
+function replaceFractions(text: string): string {
+  let result = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith("\\frac", i)) {
+      const firstBraceIdx = i + 5;
+      const num = extractBracedArg(text, firstBraceIdx);
+      if (num) {
+        const secondBraceIdx = num.endIndex + 1;
+        const den = extractBracedArg(text, secondBraceIdx);
+        if (den) {
+          result += `(${cleanLatexMath(num.content)})/(${cleanLatexMath(den.content)})`;
+          i = den.endIndex + 1;
+          continue;
+        }
+      }
+    }
+    result += text[i];
+    i++;
+  }
+  return result;
+}
+
+export function cleanLatexMath(expr: string): string {
+  let res = expr;
+  res = replaceFractions(res);
+
+  while (res.includes("\\sqrt")) {
+    const idx = res.indexOf("\\sqrt");
+    const braced = extractBracedArg(res, idx + 5);
+    if (braced) {
+      const inner = cleanLatexMath(braced.content);
+      res = res.slice(0, idx) + `√(${inner})` + res.slice(braced.endIndex + 1);
+    } else {
+      break;
+    }
+  }
+
+  while (/\\(?:text|mathrm|mathbf|textbf|mathit|textit|operatorname)\{/.test(res)) {
+    const match = res.match(/\\(?:text|mathrm|mathbf|textbf|mathit|textit|operatorname)\{/);
+    if (!match || match.index === undefined) break;
+    const startIdx = match.index + match[0].length - 1;
+    const braced = extractBracedArg(res, startIdx);
+    if (braced) {
+      res = res.slice(0, match.index) + braced.content + res.slice(braced.endIndex + 1);
+    } else {
+      break;
+    }
+  }
+
+  res = res.replace(/\{,\}/g, ",");
+  res = res.replace(/\\([%$_{}#])/g, "$1");
+  res = res.replace(/\\&amp;/g, "&amp;");
+  res = res.replace(/\\&/g, "&amp;");
+  res = res.replace(/\\[,;: ]/g, " ");
+  res = res.replace(/\\!/g, "");
+  res = res.replace(/\\q?quad/g, "  ");
+
+  res = res.replace(/\^\{([^{}]+)\}/g, (_, exp: string) => toSuperscript(exp));
+  res = res.replace(/\_\{([^{}]+)\}/g, (_, sub: string) => toSubscript(sub));
+  res = res.replace(/\^([0-9+-ni])/g, (_, exp: string) => toSuperscript(exp));
+  res = res.replace(/\_([0-9+-aeh-pr-tv-x])/g, (_, sub: string) => toSubscript(sub));
+
+  res = res.replace(/\\([a-zA-Z]+)/g, (_match, name: string) => {
+    if (SYMBOL_MAP[name]) return SYMBOL_MAP[name];
+    if (GREEK_MAP[name]) return GREEK_MAP[name];
+    return name;
+  });
+
+  res = res.replace(/\{([^{}]+)\}/g, "$1");
+
+  return res.trim().replace(/\s{2,}/g, " ");
+}
+
+export function sanitizeLatexExpressions(text: string): string {
+  let result = text;
+
+  // Block math: $$ ... $$ or \[ ... \]
+  result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_, inner: string) => cleanLatexMath(inner));
+  result = result.replace(/\\\[([\s\S]+?)\\\]/g, (_, inner: string) => cleanLatexMath(inner));
+
+  // Inline math: \( ... \)
+  result = result.replace(/\\\(([\s\S]+?)\\\)/g, (_, inner: string) => cleanLatexMath(inner));
+
+  // Inline math: $ ... $
+  result = result.replace(/\$([^\$\n]+?)\$/g, (match, inner: string) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return match;
+    if (
+      /\\[a-zA-Z,;:! %$_{}#&]/.test(trimmed) ||
+      /[\^_{}]/.test(trimmed) ||
+      /[=<>≤≥≈≠±×·÷]/.test(trimmed) ||
+      /^[a-zA-Z]$/.test(trimmed) ||
+      /^[0-9.,\s+\-*\/()]+[+\-*\/][0-9.,\s+\-*\/()]+$/.test(trimmed)
+    ) {
+      return cleanLatexMath(inner);
+    }
+    return match;
+  });
+
+  // Also clean loose LaTeX symbols outside delimiters (e.g. \rightarrow, \approx, \text{...})
+  result = cleanLatexMath(result);
+
+  return result;
 }
 
 function formatInlineHtml(value: string): string {
@@ -376,6 +786,10 @@ function formatInlineHtml(value: string): string {
     return token(`<code>${cleanLabel}</code>`);
   });
   escaped = escaped.replace(/`([^`\n]+)`/g, (_match, code: string) => token(`<code>${code}</code>`));
+
+  // Sanitize LaTeX math and TeX macros in regular text outside code blocks & links
+  escaped = sanitizeLatexExpressions(escaped);
+
   escaped = escaped.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_match, boldA: string | undefined, boldB: string | undefined) => `<b>${boldA || boldB}</b>`);
   escaped = escaped.replace(/~~(.+?)~~/g, "<s>$1</s>");
   escaped = escaped.replace(/\*([^*\n]+)\*|_([^_\n]+)_/g, (_match, italicA: string | undefined, italicB: string | undefined) => `<i>${italicA || italicB}</i>`);
