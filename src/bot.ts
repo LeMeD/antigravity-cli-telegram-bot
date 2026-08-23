@@ -133,15 +133,13 @@ export async function resumeInterruptedJobs(context: AppContext): Promise<void> 
 
 /** Handles a batch of updates, guaranteeing the offset advances even when an individual update fails. */
 export async function processUpdates(context: AppContext, updates: TelegramUpdate[]): Promise<void> {
-  let offset = context.state.offset;
   for (const update of updates) {
     try {
       await handleUpdate(context, update);
     } catch (updateErr) {
       console.error("[polling] handleUpdate error:", updateErr);
     } finally {
-      offset = update.update_id + 1;
-      await context.state.setOffset(offset);
+      await context.state.setOffset(update.update_id + 1);
     }
   }
 }
@@ -158,10 +156,9 @@ export function createBot(context: AppContext): { start(): Promise<void>; handle
     // 2. Check for interrupted in-flight jobs
     await resumeInterruptedJobs(context);
 
-    let offset = context.state.offset;
     while (true) {
       try {
-        const updates = await context.telegram.getUpdates(offset);
+        const updates = await context.telegram.getUpdates(context.state.offset);
         await processUpdates(context, updates);
       } catch (error) {
         console.error(`[polling] polling error: ${(error as Error).message}`);
