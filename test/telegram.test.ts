@@ -102,7 +102,7 @@ test("findReferencedMediaFiles detects markdown images and file paths", async ()
 });
 
 test("findReferencedMediaFiles blocks private IP and localhost web images (SSRF protection)", async () => {
-  const text = "Check ![Local](http://127.0.0.1:8080/secret.png) and ![Internal](http://192.168.1.50/admin.jpg) and ![Cloud](http://169.254.169.254/latest/meta-data.png) and ![IntIP](http://2130706433/img.png) and ![LocalHost](http://localhost/img.jpg)";
+  const text = "Check ![Local](http://127.0.0.1:8080/secret.png) and ![Internal](http://192.168.1.50/admin.jpg) and ![Cloud](http://169.254.169.254/latest/meta-data.png) and ![IntIP](http://2130706433/img.png) and ![LocalHost](http://localhost/img.jpg) and ![Mapped](http://[::ffff:127.0.0.1]/test.jpg) and ![Dot](http://localhost./test.png)";
   const media = await findReferencedMediaFiles(text);
   assert.equal(media.length, 0);
 });

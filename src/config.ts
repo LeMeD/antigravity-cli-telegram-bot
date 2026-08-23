@@ -43,7 +43,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       model, effort, allowedModels, timeoutMs: positiveIntegerFrom(env, "AGY_TIMEOUT_MS", 1_800_000),
       maxOutputBytes: positiveIntegerFrom(env, "AGY_MAX_OUTPUT_BYTES", 20_000_000),
       agent: (env.AGY_AGENT || "").trim() || undefined,
-      allowDangerouslySkipPermissions: booleanFrom(env, "AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS", true),
+      allowDangerouslySkipPermissions: booleanFrom(env, "AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS", false),
       dbPath,
     },
     queue: { maxSize: positiveIntegerFrom(env, "MAX_QUEUE_SIZE", 8) },

@@ -1,21 +1,22 @@
 import dns from "node:dns/promises";
 import fs from "node:fs/promises";
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { splitMessage } from "./markdown-renderer.js";
 
 function isPrivateOrReservedIp(ip: string): boolean {
-  const cleanIp = ip.toLowerCase().trim();
+  let cleanIp = ip.toLowerCase().trim().replace(/\.$/, "");
   if (cleanIp === "::1" || cleanIp === "::" || cleanIp.startsWith("fe80:") || cleanIp.startsWith("fc00:") || cleanIp.startsWith("fd")) {
     return true;
   }
   if (cleanIp.startsWith("::ffff:")) {
-    return isPrivateOrReservedIp(cleanIp.substring(7));
+    cleanIp = cleanIp.substring(7);
   }
-  const ipv4Match = cleanIp.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [b0, b1, b2, b3] = [Number(ipv4Match[1]), Number(ipv4Match[2]), Number(ipv4Match[3]), Number(ipv4Match[4])];
-    if (b0 > 255 || b1 > 255 || b2 > 255 || b3 > 255) return true;
+  const ipVersion = isIP(cleanIp);
+  if (ipVersion === 4) {
+    const parts = cleanIp.split(".").map(Number);
+    const [b0, b1] = parts;
     if (b0 === 127 || b0 === 10 || b0 === 0) return true;
     if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
     if (b0 === 192 && b1 === 168) return true;
@@ -27,7 +28,7 @@ function isPrivateOrReservedIp(ip: string): boolean {
 }
 
 export async function isPrivateOrReservedHost(hostname: string): Promise<boolean> {
-  const host = hostname.toLowerCase().trim();
+  const host = hostname.toLowerCase().trim().replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan")) {
     return true;
   }
@@ -44,6 +45,20 @@ export async function isPrivateOrReservedHost(hostname: string): Promise<boolean
   } catch {
     return true;
   }
+}
+
+export function isAllowedLocalMediaPath(filePath: string, workspaceDir?: string): boolean {
+  const resolved = path.resolve(filePath);
+  const tempDir = path.resolve(os.tmpdir());
+  const varTmp = path.resolve("/var/tmp");
+  const brainDir = path.resolve(os.homedir(), ".gemini/antigravity-cli/brain");
+  if (resolved.startsWith(tempDir) || resolved.startsWith(varTmp) || resolved.startsWith(brainDir)) return true;
+  if (workspaceDir) {
+    const ws = path.resolve(workspaceDir);
+    const rel = path.relative(ws, resolved);
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  }
+  return false;
 }
 
 export async function findReferencedMediaFiles(text: string, workspaceDir?: string): Promise<string[]> {
@@ -75,6 +90,7 @@ export async function findReferencedMediaFiles(text: string, workspaceDir?: stri
     const resolved = path.isAbsolute(candidate)
       ? candidate
       : (workspaceDir ? path.resolve(workspaceDir, candidate) : path.resolve(candidate));
+    if (!isAllowedLocalMediaPath(resolved, workspaceDir)) continue;
     try {
       const stat = await fs.stat(resolved);
       if (stat.isFile() && stat.size > 0 && stat.size < 50 * 1024 * 1024) {

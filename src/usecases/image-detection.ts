@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AppContext } from "../context.js";
+import { isUuid } from "../db.js";
 import { escapeHtml } from "../telegram.js";
 import type { AgyResult, ChatId } from "../types.js";
 
@@ -59,9 +60,9 @@ export async function detectAndSendGeneratedImages(
 
   // 2. Scan conversation artifact directory for images created ONLY DURING THIS JOB (mtime >= jobStartedAt - 1000)
   const convId = conversationId || result.conversationId;
-  if (convId) {
+  if (convId && isUuid(convId)) {
     const homeDir = os.homedir();
-    const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId);
+    const brainDir = path.join(homeDir, ".gemini/antigravity-cli/brain", convId.trim());
     try {
       const entries = await fs.readdir(brainDir, { withFileTypes: true });
       for (const entry of entries) {
