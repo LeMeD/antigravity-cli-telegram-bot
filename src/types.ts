@@ -41,7 +41,6 @@ export interface SessionSettings {
   logFile?: string | null;
   outputFormat?: "text" | "json" | "stream-json";
   printTimeout?: string | null;
-  dangerouslySkipPermissions?: boolean;
   verbose?: "silent" | "compact" | "detailed";
 }
 

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { childEnvironment } from "./infra/safe-env.js";
 import type { AgyConfig, AgyResult, RunnerOptions, StreamEvent, Usage } from "./types.js";
 
 const CONVERSATION_KEYS = new Set(["conversationId", "conversation_id", "conversationID", "sessionId", "session_id"]);
@@ -107,15 +108,7 @@ export function runAgyCommand(config: AgyConfig, commandArgs: string[], timeoutM
     if (signal?.aborted) return reject(new Error("AGY command cancelled"));
     const child = spawn(config.bin, commandArgs, {
       cwd: config.workspace,
-      env: (() => {
-        const {
-          TELEGRAM_BOT_TOKEN: _token,
-          TELEGRAM_ALLOWED_USER_IDS: _users,
-          TELEGRAM_ALLOWED_CHAT_IDS: _chats,
-          ...safeEnvironment
-        } = process.env;
-        return { ...safeEnvironment, NO_COLOR: "1", TERM: "dumb" };
-      })(),
+      env: childEnvironment(),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -301,10 +294,9 @@ export function formatStepUpdate(stepUpdate: Record<string, unknown> | undefined
 export function runAgy(config: AgyConfig, prompt: string, conversationId: string | null, options: RunnerOptions = {}): Promise<AgyResult> {
   return new Promise((resolve, reject) => {
     const { signal, onEvent, ...overrides } = options;
-    const { TELEGRAM_BOT_TOKEN: _token, TELEGRAM_ALLOWED_USER_IDS: _users, TELEGRAM_ALLOWED_CHAT_IDS: _chats, ...childEnvironment } = process.env;
     const outputFormat = overrides.outputFormat || "stream-json";
     const child = spawn(config.bin, buildArgs(config, prompt, conversationId, { ...overrides, outputFormat }), {
-      cwd: config.workspace, env: { ...childEnvironment, NO_COLOR: "1", TERM: "dumb" }, detached: true, stdio: ["ignore", "pipe", "pipe"],
+      cwd: config.workspace, env: childEnvironment(), detached: true, stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = ""; let stderr = ""; let pendingLine = ""; let bytes = 0;
     let outputLimited = false; let timedOut = false; let settled = false; let callbackError: Error | null = null;

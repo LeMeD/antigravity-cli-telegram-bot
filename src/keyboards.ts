@@ -1,11 +1,5 @@
 import type { ReplyKeyboardMarkup, SessionSettings } from "./types.js";
 
-function verboseLabel(verbose: SessionSettings["verbose"]): string {
-  if (verbose === "compact") return "comp";
-  if (verbose === "silent") return "sil";
-  return "det";
-}
-
 /** Persistent keyboard shown immediately above Telegram's input field. */
 export function createMainKeyboard(_settings?: SessionSettings): ReplyKeyboardMarkup {
   return {
