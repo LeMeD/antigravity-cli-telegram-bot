@@ -106,7 +106,7 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     await context.telegram.sendChatAction(job.chatId);
     typingInterval = setInterval(() => {
       context.telegram.sendChatAction(job.chatId).catch(() => undefined);
-    }, 12000);
+    }, 4000);
     const session = context.state.session(job.chatId);
     const settings = settingsFor(context, job.chatId);
     progressMessage = await context.telegram.sendMessage(job.chatId, `⏳ AGY is starting... (${modelLabel(settings.model)})`);
