@@ -144,10 +144,7 @@ async function applySettingChange(context: AppContext, chatId: import("../types.
   const settings = settingsFor(context, chatId);
   if (key === "model") {
     const outcome = await selectModel(context, chatId, value);
-    if (!outcome) {
-      // Invalid model falls through to the generic handler below, exactly
-      // like the legacy implementation (settings re-saved, main menu shown).
-    } else {
+    if (outcome) {
       await context.telegram.editMessageText(chatId, messageId, outcome.text, outcome.defaultOfferKeyboard, "HTML");
       await context.telegram.sendMessage(chatId, "Controls updated.", createMainKeyboard(outcome.settings));
       return;

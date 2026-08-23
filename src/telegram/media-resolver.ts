@@ -1,27 +1,49 @@
+import dns from "node:dns/promises";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { splitMessage } from "./markdown-renderer.js";
-function isPrivateOrReservedHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().trim();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+
+function isPrivateOrReservedIp(ip: string): boolean {
+  const cleanIp = ip.toLowerCase().trim();
+  if (cleanIp === "::1" || cleanIp === "::" || cleanIp.startsWith("fe80:") || cleanIp.startsWith("fc00:") || cleanIp.startsWith("fd")) {
     return true;
   }
-  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (cleanIp.startsWith("::ffff:")) {
+    return isPrivateOrReservedIp(cleanIp.substring(7));
+  }
+  const ipv4Match = cleanIp.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
-    const [b0, b1] = [Number(ipv4Match[1]), Number(ipv4Match[2])];
-    if (b0 === 127) return true;
-    if (b0 === 10) return true;
+    const [b0, b1, b2, b3] = [Number(ipv4Match[1]), Number(ipv4Match[2]), Number(ipv4Match[3]), Number(ipv4Match[4])];
+    if (b0 > 255 || b1 > 255 || b2 > 255 || b3 > 255) return true;
+    if (b0 === 127 || b0 === 10 || b0 === 0) return true;
     if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
     if (b0 === 192 && b1 === 168) return true;
     if (b0 === 169 && b1 === 254) return true;
-    if (b0 === 0) return true;
     if (b0 === 100 && b1 >= 64 && b1 <= 127) return true;
-  }
-  if (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc00:") || host.startsWith("fd")) {
-    return true;
+    if (b0 >= 224) return true;
   }
   return false;
+}
+
+export async function isPrivateOrReservedHost(hostname: string): Promise<boolean> {
+  const host = hostname.toLowerCase().trim();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan")) {
+    return true;
+  }
+  if (/^\d+$/.test(host) || /^0x[0-9a-f]+$/i.test(host)) {
+    return true;
+  }
+  if (isPrivateOrReservedIp(host)) {
+    return true;
+  }
+  try {
+    const addresses = await dns.lookup(host, { all: true });
+    if (!addresses || addresses.length === 0) return true;
+    return addresses.some(({ address }) => isPrivateOrReservedIp(address));
+  } catch {
+    return true;
+  }
 }
 
 export async function findReferencedMediaFiles(text: string, workspaceDir?: string): Promise<string[]> {
@@ -72,7 +94,7 @@ export async function findReferencedMediaFiles(text: string, workspaceDir?: stri
     if (!webUrl) continue;
     try {
       const parsedUrl = new URL(webUrl);
-      if (isPrivateOrReservedHost(parsedUrl.hostname)) continue;
+      if (await isPrivateOrReservedHost(parsedUrl.hostname)) continue;
 
       const ext = path.extname(parsedUrl.pathname).toLowerCase() || ".jpg";
       const hash = Buffer.from(webUrl).toString("base64url").slice(0, 24);

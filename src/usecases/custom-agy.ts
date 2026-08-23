@@ -17,7 +17,6 @@ function customArgsForExecution(context: AppContext, args: string[]): string[] {
   const isPrintCommand = args.includes("--print") || args.includes("-p") || args.includes("--prompt");
   const executionArgs = [...args];
   if (isPrintCommand && context.config.agy.sandbox && !context.config.agy.allowSandboxDisable && !executionArgs.includes("--sandbox")) executionArgs.push("--sandbox");
-  if (isPrintCommand && context.config.agy.allowDangerouslySkipPermissions && !executionArgs.includes("--dangerously-skip-permissions")) executionArgs.push("--dangerously-skip-permissions");
   return executionArgs;
 }
 
