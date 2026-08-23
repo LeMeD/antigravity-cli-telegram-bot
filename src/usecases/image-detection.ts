@@ -4,6 +4,7 @@ import path from "node:path";
 import type { AppContext } from "../context.js";
 import { isUuid } from "../db.js";
 import { escapeHtml } from "../telegram.js";
+import { isAllowedLocalMediaPath } from "../telegram/media-resolver.js";
 import type { AgyResult, ChatId } from "../types.js";
 
 const sentImagePathsByChat = new Map<string, Set<string>>();
@@ -53,7 +54,7 @@ export async function detectAndSendGeneratedImages(
   const fileMatches = result.text.matchAll(/(?:file:\/\/|['"])((\/[^\s'")]+)\.(png|jpg|jpeg|webp))(?:\b|['"]|\))/gi);
   for (const match of fileMatches) {
     const fullPath = `${match[2]}.${match[3]}`;
-    if (!sentImagePaths.has(fullPath) && (await fileExists(fullPath))) {
+    if (!sentImagePaths.has(fullPath) && isAllowedLocalMediaPath(fullPath, context.config.agy.workspace) && (await fileExists(fullPath))) {
       imagesToSend.add(fullPath);
     }
   }

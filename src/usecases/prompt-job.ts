@@ -317,5 +317,8 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     if (job.imagePath) {
       await fs.unlink(job.imagePath).catch(() => undefined);
     }
+    if (job.documentPath) {
+      await fs.unlink(job.documentPath).catch(() => undefined);
+    }
   }
 }
