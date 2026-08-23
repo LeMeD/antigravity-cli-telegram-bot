@@ -6,7 +6,7 @@ import { controllerKey } from "../context.js";
 import { createMainKeyboard } from "../keyboards.js";
 import { modelLabel } from "../models.js";
 import type { QueueJob } from "../queue.js";
-import { findReferencedMediaFiles } from "../telegram.js";
+import { escapeHtml, findReferencedMediaFiles } from "../telegram.js";
 import { formatStepUpdate, runAgy } from "../agy-runner.js";
 import { parseContext, parseCredits, parseUsageQuota, runPtyCommand } from "../pty-runner.js";
 import { settingsFor } from "../domain/settings.js";
@@ -147,23 +147,12 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
       if (verbose === "silent") return;
 
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
-
-      if (responseDraft.trim()) {
-        const draft = responseDraft.length > 2500 ? `...${responseDraft.slice(-2500)}` : responseDraft;
-        const stepsDisplay = recentSteps.map((s, idx) => {
-          const isLatest = idx === recentSteps.length - 1;
-          return `${isLatest ? "➜" : "✓"} ${s}`;
-        });
-        const stepsText = stepsDisplay.length ? `\n${stepsDisplay.join("\n")}\n\n` : "\n\n";
-        pendingEditContent = `⚡ ${elapsed}s · ${modelLabel(settings.model)}\n${stepsText}${draft}`;
-      } else {
-        const stepsDisplay = recentSteps.map((s, idx) => {
-          const isLatest = idx === recentSteps.length - 1;
-          return `${isLatest ? "➜" : "✓"} ${s}`;
-        });
-        const body = stepsDisplay.length ? `\n\n${stepsDisplay.join("\n")}` : "\n\nInitializing...";
-        pendingEditContent = `⏳ AGY is working... (${elapsed}s · ${modelLabel(settings.model)})${body}`;
-      }
+      const stepsDisplay = recentSteps.map((s, idx) => {
+        const isLatest = idx === recentSteps.length - 1;
+        return `${isLatest ? "➜" : "✓"} ${s}`;
+      });
+      const body = stepsDisplay.length ? `\n\n${stepsDisplay.join("\n")}` : "\n\nInitializing...";
+      pendingEditContent = `⏳ AGY is working... (${elapsed}s · ${modelLabel(settings.model)})${body}`;
 
       void flushProgress();
     };
@@ -172,7 +161,7 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     heartbeatTimer = setInterval(() => {
       if (isCancelled() || controller.signal.aborted) return;
       const idleSec = Math.floor((Date.now() - lastEventReceivedAt) / 1000);
-      if (idleSec >= 6 && !responseDraft.trim()) {
+      if (idleSec >= 6) {
         updateProgress(null);
       }
     }, 6000);
@@ -200,8 +189,6 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
         onEvent: (event: StreamEvent) => {
           lastEventReceivedAt = Date.now();
           const step = event.step_update as Record<string, unknown> | undefined;
-          const textDelta = typeof step?.text_delta === "string" ? step.text_delta : "";
-          if (textDelta) responseDraft += textDelta;
           const update = formatStepUpdate(step);
           updateProgress(update);
         },
@@ -257,10 +244,14 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
           `⚡ ${duration}s${tokens} · ${modelLabel(result.model || settings.model)}`
         ).catch(() => undefined);
       } else {
+        const duration = ((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1);
+        const tokens = result.usage?.total_tokens ? ` · ${result.usage.total_tokens.toLocaleString()} tok` : "";
         await context.telegram.editMessageText(
           job.chatId,
           progressMessage.message_id,
-          `AGY completed in ${((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1)}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageText(result.usage, result.model || settings.model)}`
+          `✅ <b>AGY completed</b> (<code>${duration}s${tokens}</code> · <code>${escapeHtml(modelLabel(result.model || settings.model))}</code>)`,
+          undefined,
+          "HTML"
         ).catch(() => undefined);
       }
     }
