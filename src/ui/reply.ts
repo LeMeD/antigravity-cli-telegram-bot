@@ -2,7 +2,7 @@ import type { AppContext } from "../context.js";
 import { formatTelegramHtmlChunks, splitMessage, splitPreformattedHtml } from "../telegram.js";
 import type { ChatId, ReplyMarkup } from "../types.js";
 
-const CHUNK_DELAY_MS = 600;
+const CHUNK_DELAY_MS = 800;
 
 export async function reply(context: AppContext, chatId: ChatId, text: string, replyMarkup?: ReplyMarkup): Promise<void> {
   const chunks = splitMessage(text, context.config.telegram.maxMessageChars);

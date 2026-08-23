@@ -102,7 +102,7 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     await context.telegram.sendChatAction(job.chatId);
     typingInterval = setInterval(() => {
       context.telegram.sendChatAction(job.chatId).catch(() => undefined);
-    }, 6000);
+    }, 12000);
     const session = context.state.session(job.chatId);
     const settings = settingsFor(context, job.chatId);
     progressMessage = await context.telegram.sendMessage(job.chatId, `⏳ AGY is starting... (${modelLabel(settings.model)})`);
@@ -115,7 +115,7 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
 
     const flushProgress = async (): Promise<void> => {
       if (isEditing || !progressMessage || disableProgressEdits || !pendingEditContent) return;
-      if (Date.now() - lastProgressAt < 2500) return;
+      if (Date.now() - lastProgressAt < 4500) return;
 
       const content = pendingEditContent;
       pendingEditContent = null;
@@ -125,13 +125,13 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
       try {
         await context.telegram.editMessageText(job.chatId, progressMessage.message_id, content);
       } catch (err) {
-        if (err instanceof Error && (err.message.includes("429") || err.message.includes("Too Many Requests"))) {
+        if (err instanceof Error && (err.message.includes("429") || err.message.includes("Too Many Requests") || err.message.includes("Bad Request"))) {
           disableProgressEdits = true;
         }
       } finally {
         isEditing = false;
         if (pendingEditContent && !disableProgressEdits) {
-          setTimeout(flushProgress, 2500);
+          setTimeout(flushProgress, 4500);
         }
       }
     };
@@ -172,14 +172,14 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     heartbeatTimer = setInterval(() => {
       if (isCancelled() || controller.signal.aborted) return;
       const idleSec = Math.floor((Date.now() - lastEventReceivedAt) / 1000);
-      if (idleSec >= 4 && !responseDraft.trim()) {
+      if (idleSec >= 6 && !responseDraft.trim()) {
         updateProgress(null);
       }
-    }, 4000);
+    }, 6000);
 
     const progressTicker = setInterval(() => {
       updateProgress(null);
-    }, 4000);
+    }, 6000);
 
     let result;
     try {
