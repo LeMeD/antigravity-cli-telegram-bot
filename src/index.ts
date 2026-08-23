@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import dns from "node:dns";
 import path from "node:path";
 import process from "node:process";
 import { loadConfig } from "./config.js";
@@ -7,6 +8,8 @@ import { StateStore } from "./state.js";
 import { TelegramClient } from "./telegram.js";
 import { acquireInstanceLock, releaseInstanceLock } from "./infra/instance-lock.js";
 import { createAppServices, createBot } from "./bot.js";
+
+dns.setDefaultResultOrder?.("ipv4first");
 
 const config = loadConfig();
 

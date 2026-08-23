@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
+import dns from "node:dns";
 import { createRequire } from "node:module";
 import { defaultEnvFile, loadEnvFile, runSetup } from "./setup.js";
+
+dns.setDefaultResultOrder?.("ipv4first");
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { name: string; version: string };
