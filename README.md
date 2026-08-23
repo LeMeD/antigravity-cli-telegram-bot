@@ -11,7 +11,7 @@ streamed progress, model controls, and a hardened systemd deployment.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-47%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-120%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -62,44 +62,71 @@ service under a dedicated Unix user.
 - Separate `/tokens` reporting for per-turn and accumulated stream usage.
 - AGY CLI panels for models, agents, changelog, plugins, CLI help, version, update, and common options.
 - Full non-interactive AGY CLI passthrough through `/agy` with shell-free argument handling.
-- Streamed progress messages and live response drafts.
+- Streamed progress messages and live response drafts with separate final response bubbles.
 - Per-turn and accumulated token usage when AGY provides usage data.
 - Long replies uploaded as Markdown documents.
-- Process-group timeout and cancellation.
-- Strict TypeScript build with an automated test suite (47 passing tests).
+- Process-group timeout and hard cancellation.
+- Strict TypeScript build with an automated test suite (120 passing tests).
+- Clean modular architecture (`domain`, `infra`, `router`, `telegram`, `ui`, `usecases`).
+- Hardened security: Bitwise 128-bit IPv6 SSRF protection, strict path containment, secret scrubbing, and safe permission defaults.
 - Dangerous plugin, update, install, and permission operations require an explicit second confirmation.
 - AGY is restricted to the configured workspace.
 
 ## Architecture
 
 ```text
-Telegram
-   |
-   v
-Long-polling gateway
-   |
-   v
-Per-chat authorization and queue
-   |                       |
-   v                       v
-One non-interactive AGY   One-shot PTY AGY command
-process                   (/usage, /credits)
-   |                       |
-   v                       v
-AGY stream-json events    Cleaned terminal report
--> Telegram responses     -> Telegram HTML response
-   |
-   v
-Read-only AGY SQLite conversation index -> /resume
+                                 Telegram Bot API
+                                        │
+                                        ▼
+                           ┌──────────────────────────┐
+                           │   src/router/updates.ts  │
+                           │   (Ingestion & Auth Gate)│
+                           └────────────┬─────────────┘
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+       ┌────────────────────────┐              ┌────────────────────────┐
+       │   src/router/commands  │              │  src/router/callbacks  │
+       │   (Slash Commands)     │              │  (Inline Keyboards)    │
+       └────────────┬───────────┘              └────────────┬───────────┘
+                    │                                       │
+                    └───────────────────┬───────────────────┘
+                                        ▼
+                           ┌──────────────────────────┐
+                           │   src/usecases/enqueue   │
+                           │   (Job Queue & Auto-Int) │
+                           └────────────┬─────────────┘
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+       ┌────────────────────────┐              ┌────────────────────────┐
+       │  src/usecases/prompt   │              │   src/pty-runner.ts    │
+       │  Non-interactive AGY   │              │   Interactive PTY AGY  │
+       │  (--output stream-json)│              │   (/usage, /credits)   │
+       └────────────┬───────────┘              └────────────┬───────────┘
+                    │                                       │
+                    ▼                                       ▼
+       ┌────────────────────────┐              ┌────────────────────────┐
+       │ Live Stream Progress   │              │ Cleaned Terminal TUI   │
+       │ & Clean Answer Bubble  │              │ Quota & Credit Card    │
+       └────────────┬───────────┘              └────────────┬───────────┘
+                    │                                       │
+                    └───────────────────┬───────────────────┘
+                                        ▼
+                           ┌──────────────────────────┐
+                           │   src/ui/ & telegram/    │
+                           │   (HTML, LaTeX, Media)   │
+                           └──────────────────────────┘
 ```
 
 The gateway starts AGY with `--print --output-format stream-json`, parses its
-incremental NDJSON events, and edits Telegram messages as work progresses.
-Normal prompts intentionally use this non-interactive mode for stable response
-boundaries. The read-only `/usage` and `/credits` commands are the exception:
-they launch a short-lived PTY session, type the slash command, clean ANSI/TUI
-output, and return only the resulting report. PTY processes are time-limited
-and can be cancelled with `/cancel`.
+incremental NDJSON events, and streams real-time status updates to Telegram.
+Final model responses are delivered in a clean, separate chat bubble to avoid
+overwriting progress headers. Normal prompts use this non-interactive mode for
+stable response boundaries. The read-only `/usage`, `/credits`, and `/context`
+commands use a short-lived PTY session to capture interactive TUI reports, clean
+ANSI control sequences, and render structured quota cards. PTY processes are
+time-limited and can be aborted immediately with `/cancel`.
 
 ## Requirements
 
@@ -516,22 +543,79 @@ Before opening a pull request:
 
 ## Project Structure
 
+The codebase is organized as a modular domain-driven architecture with clean separation of concerns, explicit dependency injection, and complete test isolation:
+
 ```text
 src/
-  agy-runner.ts   AGY process execution and stream-json parsing
-  db.ts           Read-only SQLite conversation listing and lookup
-  config.ts       Environment parsing and safety validation
-  index.ts        Telegram polling, commands, callbacks, and job lifecycle
-  keyboards.ts    Persistent Telegram reply keyboard
-  models.ts       Built-in model catalog
-  pty-runner.ts   PTY execution and quota/credits report parsing
-  queue.ts        Global job queue and cancellation
-  state.ts        Persistent sessions, offsets, settings, and usage
-  telegram.ts     Typed Telegram Bot API client
-  types.ts        Shared TypeScript types
-test/             Node test runner tests
-deploy/           systemd unit and deployment environment template
-.github/workflows/ CI, package build, and npm publish workflows
+├── cli.ts                      # CLI entrypoint and binary dispatcher
+├── bot.ts                      # Bot lifecycle coordinator and long-polling runner
+├── context.ts                  # AppContext dependency injection graph
+├── config.ts                   # Environment validation, defaults, and security bounds
+├── types.ts                    # Shared TypeScript domain types and interfaces
+├── agy-runner.ts               # Non-interactive AGY CLI runner and stream-json parser
+├── pty-runner.ts               # Interactive PTY session runner for /usage & /credits
+├── queue.ts                    # Global job queue with cancellation and concurrency guards
+├── state.ts                    # Persistent state store (sessions, offsets, in-flight jobs)
+├── db.ts                       # Read-only SQLite conversation index and lookup
+├── models.ts                   # Dynamic & default model catalog
+├── setup.ts                    # Interactive terminal setup wizard
+├── index.ts                    # Public package exports
+│
+├── domain/                     # Business Logic & Entities
+│   ├── settings.ts             # Per-chat session settings resolution & defaults
+│   └── usage-math.ts           # Token arithmetic, percentages, and progress bars
+│
+├── infra/                      # Infrastructure & Environment Hardening
+│   ├── instance-lock.ts        # Atomic PID-based instance lock to prevent duplicates
+│   └── safe-env.ts             # Secret scrubbing and child environment isolation
+│
+├── router/                     # Ingestion, Authentication & Dispatch
+│   ├── updates.ts              # Telegram update ingestion and attachment dispatch
+│   ├── commands.ts             # Slash command routing and execution registry
+│   ├── callbacks.ts            # Inline keyboard callback query handler
+│   ├── callback-parser.ts      # Strongly-typed callback query parser
+│   └── auth.ts                 # User ID and chat ID allowlist authorization gate
+│
+├── telegram/                   # Telegram Engine & Media Services
+│   ├── client.ts               # HTTP client with exponential backoff & IPv4-first DNS
+│   ├── markdown-renderer.ts    # Telegram HTML formatting, LaTeX conversion & chunking
+│   └── media-resolver.ts       # Path containment and SSRF-hardened web image fetcher
+│
+├── ui/                         # Presentation & Views
+│   ├── reply.ts                # Resilient message sender with chunking & retry logic
+│   ├── screens.ts              # Menu, status, tokens, and session screen formatters
+│   ├── inline-keyboards.ts     # Dynamic inline keyboards (models, settings, confirmations)
+│   └── messages.ts             # Standardized user-facing UI messages and banners
+│
+└── usecases/                   # Application Workflows
+    ├── prompt-job.ts           # Prompt execution lifecycle, live streaming & token summaries
+    ├── custom-agy.ts           # Full-control /agy CLI passthrough & confirmation gating
+    ├── enqueue.ts              # Job queueing with zero-loss auto-interrupt merge
+    ├── image-detection.ts      # AI artifact image detection and delivery
+    ├── model-selection.ts      # Dynamic model fetching and effort level selection
+    ├── self-update.ts          # Git pull, TypeScript build, and systemd restart flow
+    └── default-settings.ts     # Atomic default settings persistence to .env
+
+test/                           # Node Test Runner Suite (120 automated tests)
+├── agy-runner.test.ts          # Stream parser and process lifecycle tests
+├── callback-parser.test.ts     # Typed callback parser tests
+├── commands.test.ts            # Command execution and authorization parity tests
+├── config.test.ts              # Configuration validation and default safety tests
+├── db.test.ts                  # SQLite pagination and conversation lookup tests
+├── golden-pure.test.ts         # Screen rendering and format snapshot tests
+├── handlers.test.ts            # Router, callback, and command handling tests
+├── instance-lock.test.ts       # Atomic lock acquisition and crash takeover tests
+├── production-resilience.test.ts # Polling recovery, retry, rate limit & queue tests
+├── pty-runner.test.ts          # PTY terminal report extraction & ANSI cleaner tests
+├── queue.test.ts               # Queue order, worker crash, and cancellation tests
+├── setup.test.ts               # Interactive setup wizard tests
+├── smoke.test.ts               # End-to-end PTY and database smoke tests
+├── state.test.ts               # State persistence and in-flight job recovery tests
+├── telegram.test.ts            # SSRF protection, LaTeX, HTML, and media resolver tests
+└── helpers/                    # Test fixtures, mock Telegram server, and utilities
+
+deploy/                         # Production systemd service unit & environment template
+.github/workflows/              # CI/CD, TypeScript build, and npm publish workflows
 ```
 
 ## Limitations
