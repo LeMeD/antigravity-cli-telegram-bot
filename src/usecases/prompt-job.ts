@@ -244,14 +244,12 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
           `⚡ ${duration}s${tokens} · ${modelLabel(result.model || settings.model)}`
         ).catch(() => undefined);
       } else {
-        const duration = ((result.durationMs || Date.now() - startedAt) / 1000).toFixed(1);
-        const tokens = result.usage?.total_tokens ? ` · ${result.usage.total_tokens.toLocaleString()} tok` : "";
+        const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
+        const usageBlock = usageText(result.usage, result.model || settings.model);
         await context.telegram.editMessageText(
           job.chatId,
           progressMessage.message_id,
-          `✅ <b>AGY completed</b> (<code>${duration}s${tokens}</code> · <code>${escapeHtml(modelLabel(result.model || settings.model))}</code>)`,
-          undefined,
-          "HTML"
+          `AGY completed in ${duration}s.\nModel: ${modelLabel(result.model || settings.model)}\n${usageBlock}`
         ).catch(() => undefined);
       }
     }
