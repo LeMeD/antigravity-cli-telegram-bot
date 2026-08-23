@@ -98,6 +98,10 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
   let responseDraft = "";
   let heartbeatTimer: NodeJS.Timeout | undefined;
   let typingInterval: NodeJS.Timeout | null = null;
+  let isEditing = false;
+  let pendingEditContent: string | null = null;
+  let disableProgressEdits = false;
+  let progressTimeout: NodeJS.Timeout | null = null;
   try {
     await context.telegram.sendChatAction(job.chatId);
     typingInterval = setInterval(() => {
@@ -109,13 +113,18 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
     const startedAt = Date.now();
     const recentSteps: string[] = [];
 
-    let isEditing = false;
-    let pendingEditContent: string | null = null;
-    let disableProgressEdits = false;
-
     const flushProgress = async (): Promise<void> => {
       if (isEditing || !progressMessage || disableProgressEdits || !pendingEditContent) return;
-      if (Date.now() - lastProgressAt < 4500) return;
+      if (Date.now() - lastProgressAt < 4500) {
+        if (!progressTimeout && !disableProgressEdits) {
+          const delay = Math.max(500, 4500 - (Date.now() - lastProgressAt));
+          progressTimeout = setTimeout(() => {
+            progressTimeout = null;
+            void flushProgress();
+          }, delay);
+        }
+        return;
+      }
 
       const content = pendingEditContent;
       pendingEditContent = null;
@@ -130,8 +139,11 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
         }
       } finally {
         isEditing = false;
-        if (pendingEditContent && !disableProgressEdits) {
-          setTimeout(flushProgress, 4500);
+        if (pendingEditContent && !disableProgressEdits && !progressTimeout) {
+          progressTimeout = setTimeout(() => {
+            progressTimeout = null;
+            void flushProgress();
+          }, 4500);
         }
       }
     };
@@ -194,7 +206,14 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
         },
       });
     } finally {
+      disableProgressEdits = true;
+      pendingEditContent = null;
+      if (progressTimeout) {
+        clearTimeout(progressTimeout);
+        progressTimeout = null;
+      }
       clearInterval(progressTicker);
+      clearInterval(heartbeatTimer);
       await context.state.clearInFlight(job.chatId);
     }
     if (isCancelled() || controller.signal.aborted) {
@@ -285,6 +304,12 @@ export async function runPromptJob(context: AppContext, job: QueueJob, isCancell
       });
     }
   } finally {
+    disableProgressEdits = true;
+    pendingEditContent = null;
+    if (progressTimeout) {
+      clearTimeout(progressTimeout);
+      progressTimeout = null;
+    }
     if (typingInterval) clearInterval(typingInterval);
     clearInterval(heartbeatTimer);
     context.controllers.delete(controllerKey("prompt", job.chatId));
