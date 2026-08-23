@@ -3,7 +3,32 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.Setudo.html).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.3.0] - 2026-08-23
+
+### Added
+- **Clean Modular Architecture**: Decomposed monolithic codebase into clean, maintainable domain layers (`domain/`, `infra/`, `router/`, `telegram/`, `ui/`, and `usecases/`).
+- **Comprehensive Test Suite**: Added 120 automated unit, smoke, router, and resilience tests with 100% pass coverage.
+- **Instance Lock Mechanism**: Prevents concurrent duplicate bot instances on the same host using atomic PID file locking.
+- **IPv4-First DNS Resolution**: Forces `ipv4first` result order to eliminate 10–15s connection delays to `api.telegram.org` on hosts without native IPv6 routing.
+- **Continuous 4s Typing Indicator**: Stable typing heartbeat ensuring Telegram's status indicator remains active throughout long model thinking turns.
+
+### Security
+- **Advanced SSRF Protection**: Bitwise 128-bit IPv6 CIDR validation (blocking ULA `fc00::/7`, link-local `fe80::/10`, site-local `fec0::/10`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`), IPv4-mapped IPv6, decimal/hex IP encodings, and DNS pre-resolution.
+- **HTTP Redirect Blocking**: Web media fetcher now strictly uses `redirect: "manual"` and rejects 3xx redirects to prevent SSRF bypasses to internal/cloud metadata services.
+- **Strict Path Segment Boundary Containment**: Replaced loose string prefix checks with `path.relative` containment (`isWithin`) across workspace, temp, and brain artifact directories.
+- **Secret Stripping from Child Env**: Telegram bot token and secrets are scrubbed before spawning AGY child processes.
+- **Conversation UUID Validation**: Verifies conversation IDs match standard UUID format before accessing artifact directories.
+- **Permission Safety Defaults**: `AGY_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS` now defaults to `false` in code, requiring explicit opt-in via environment configuration.
+
+### Fixed
+- **Critical Polling Offset Advancement**: Fixed dynamic offset tracking in the long polling loop to prevent infinite replay loops on commands like `/new`.
+- **Telegram Rate-Limit & 429 Resilience**: Added non-blocking error handling and exponential backoff for Telegram API rate limits.
+- **Session Header & Response Separation**: Progress header strictly displays step tickers and token usage breakdowns, while final AI responses are sent in a separate clean chat bubble.
+- **Timer Race Condition Cleanup**: Background progress update timers are immediately cleared upon job completion, preventing completed summaries from being overwritten by stale progress text.
+- **Zero-Loss Auto-Interrupt**: Under `TELEGRAM_AUTO_INTERRUPT`, multiple queued prompts are merged and preserved rather than silently discarded.
+- **Document Upload Cleanup**: Uploaded documents are automatically cleaned up in `finally` blocks after processing to prevent disk space accumulation.
 
 ## [0.2.0] - 2026-08-21
 
@@ -102,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.Set
 - Standalone AGY Telegram gateway
 - TypeScript migration
 
+[0.3.0]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.1.6...v0.1.7
