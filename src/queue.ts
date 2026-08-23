@@ -38,6 +38,9 @@ export class JobQueue {
     this.options.onCancel?.(chatId);
     return { removed: before - this.pending.length, activeCancelled };
   }
+  public pendingForChat(chatId: ChatId): QueueJob[] {
+    return this.pending.filter((job) => String(job.chatId) === String(chatId));
+  }
   public statusForChat(chatId: ChatId): QueueStatus {
     return { active: this.active && String(this.active.chatId) === String(chatId) ? this.active : null, queued: this.pending.filter((job) => String(job.chatId) === String(chatId)).length, totalQueued: this.pending.length };
   }

@@ -9,8 +9,22 @@ export function enqueueJob(context: AppContext, chatId: ChatId, job: Partial<Que
   const status = context.queue.statusForChat(chatId);
   let effectivePrompt = job.prompt;
   if (context.config.telegram.autoInterrupt) {
-    if (status.active && status.active.prompt && (job.kind === "prompt" || !job.kind) && job.prompt) {
-      effectivePrompt = `${status.active.prompt}\n\n[Update / Follow-up]: ${job.prompt}`;
+    const queuedPrompts = context.queue.pendingForChat(chatId)
+      .map((j) => j.prompt)
+      .filter(Boolean) as string[];
+
+    const parts: string[] = [];
+    if (status.active?.prompt && (job.kind === "prompt" || !job.kind)) {
+      parts.push(status.active.prompt);
+    }
+    if (queuedPrompts.length > 0) {
+      parts.push(...queuedPrompts);
+    }
+    if (job.prompt) {
+      parts.push(parts.length > 0 ? `[Update / Follow-up]: ${job.prompt}` : job.prompt);
+    }
+    if (parts.length > 0) {
+      effectivePrompt = parts.join("\n\n");
     }
     if (status.active || status.queued > 0) {
       context.queue.cancelForChat(chatId);

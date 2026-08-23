@@ -117,7 +117,8 @@ export async function findReferencedMediaFiles(text: string, workspaceDir?: stri
       const targetPath = path.join(os.tmpdir(), `web_media_${hash}${ext}`);
       const stat = await fs.stat(targetPath).catch(() => null);
       if (!stat || stat.size === 0) {
-        const res = await fetch(webUrl, { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(webUrl, { redirect: "manual", signal: AbortSignal.timeout(8000) });
+        if ([301, 302, 303, 307, 308].includes(res.status)) continue;
         if (res.ok) {
           const buffer = Buffer.from(await res.arrayBuffer());
           if (buffer.length < 20 * 1024 * 1024) { // max 20MB
