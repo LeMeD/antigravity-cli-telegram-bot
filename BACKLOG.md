@@ -61,3 +61,5 @@ systemctl --user restart agy-telegram
 - [ ] **Gestion avancée des quotas** : Alertes Telegram paramétrables lorsque le quota approche d'un seuil critique (ex. 80 %).
 - [ ] **Commandes rapides personnalisées** : Permettre la définition d'alias de prompts personnalisés depuis l'interface utilisateur.
 - [ ] **Affichage en direct des transitions d'agents et délégation de sous-agents** : Rendu en temps réel des intentions et messages intermédiaires de l'agent dans le message de progression éditable (`progressMessage`) lors des délégations à des sous-agents, évitant la pollution du rapport final ([Issue #29](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/29)).
+- [x] **Environnement de recette et bot Telegram dédié aux tests** : Mise en place de la compétence locale de projet ([telegram-test-runner](.agents/skills/telegram-test-runner/SKILL.md)) et configuration isolée (`~/.config/agy-telegram-test/.env`) pour valider les évolutions sur le bot de test dédié (`8797558243`) avec cycle de vie éphémère (fermeture impérative du runner temporaire dès soumission de la PR).
+

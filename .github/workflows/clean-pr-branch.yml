@@ -35,9 +35,9 @@ jobs:
           # Création et bascule sur la branche miroir
           git checkout -B "$PR_BRANCH"
 
-          # Suppression des éléments internes (roadmap, spécifications et ce workflow)
+          # Suppression des éléments internes (roadmap, spécifications, compétences et ce workflow)
           MODIFIED=0
-          for target in BACKLOG.md docs .github/workflows/clean-pr-branch.yml; do
+          for target in BACKLOG.md docs .agents .github/workflows/clean-pr-branch.yml; do
             if [ -e "$target" ]; then
               echo "Suppression de l'élément interne : $target"
               git rm -rf "$target"
