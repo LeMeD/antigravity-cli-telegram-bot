@@ -41,6 +41,7 @@ service under a dedicated Unix user.
 - [Ecosystem & Complementary Tools](#ecosystem--complementary-tools)
 - [Limitations](#limitations)
 - [Contributing](#contributing)
+- [Disclaimer](#disclaimer)
 - [License](#license)
 
 ## Features
@@ -643,6 +644,10 @@ Issues and pull requests are welcome. Please include the motivation, expected
 behavior, test coverage, and any security or deployment impact in your change.
 Do not include bot tokens, AGY credentials, private workspace files, or server
 logs containing secrets.
+
+## Disclaimer
+
+This is an independent, community-driven open-source project that interfaces with the official Google Antigravity (`agy`) CLI. It is **not** an official Google product and is **not** affiliated with, sponsored by, or endorsed by Google LLC or Google DeepMind. "Google", "Gemini", and "Antigravity" are trademarks of Google LLC.
 
 ## License
 
