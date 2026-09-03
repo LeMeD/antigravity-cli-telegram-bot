@@ -24,10 +24,17 @@ export class StateStore {
   }
 
   public session(chatId: ChatId): SessionState | null { return this.data.sessions[String(chatId)] || null; }
-  public async resetSession(chatId: ChatId, preserveSettings = true): Promise<void> {
+  public async resetSession(chatId: ChatId, preserveSettings = true, preserveWorkspace?: boolean): Promise<void> {
     const existing = this.data.sessions[String(chatId)];
+    const isTopic = String(chatId).includes(":");
+    // In 1:1 DMs, preserveWorkspace defaults to false (revert to default workspace).
+    // In forum topics, preserveWorkspace defaults to true (preserve workspace bound to topic).
+    const keepWorkspace = preserveWorkspace !== undefined ? preserveWorkspace : isTopic;
     if (preserveSettings && existing?.settings) {
       const { continueSession, newProject, model, effort, ...restSettings } = existing.settings;
+      if (!keepWorkspace) {
+        restSettings.workspace = null;
+      }
       const hasCustomSettings = Object.values(restSettings).some((val) => val !== undefined && val !== null);
       if (hasCustomSettings) {
         this.data.sessions[String(chatId)] = {
