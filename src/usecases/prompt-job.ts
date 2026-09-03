@@ -14,6 +14,7 @@ import { addUsage } from "../domain/usage-math.js";
 import { reply, replyWithFormattedResponse, replyWithHtml } from "../ui/reply.js";
 import { usageText } from "../ui/messages.js";
 import { clearSentImagePaths, detectAndSendGeneratedImages } from "./image-detection.js";
+import { parseChatTarget } from "../telegram/client.js";
 import type { StreamEvent } from "../types.js";
 
 type PtyReportKind = "usage" | "credits" | "context";
