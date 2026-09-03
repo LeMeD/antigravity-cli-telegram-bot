@@ -60,3 +60,4 @@ systemctl --user restart agy-telegram
 - [ ] **Internationalisation (i18n)** : Possibilité de configurer la langue des messages système du bot (français / anglais).
 - [ ] **Gestion avancée des quotas** : Alertes Telegram paramétrables lorsque le quota approche d'un seuil critique (ex. 80 %).
 - [ ] **Commandes rapides personnalisées** : Permettre la définition d'alias de prompts personnalisés depuis l'interface utilisateur.
+- [ ] **Affichage en direct des transitions d'agents et délégation de sous-agents** : Rendu en temps réel des intentions et messages intermédiaires de l'agent dans le message de progression éditable (`progressMessage`) lors des délégations à des sous-agents, évitant la pollution du rapport final ([Issue #29](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/29)).
