@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-03
+
+### Added
+- **Telegram Forum Topics (Supergroup Threads)**: Full isolation and routing for Telegram forum topics using composite session keys (`chat_id:message_thread_id`). Outbound messages, photos, documents, and chat actions route directly to the active topic thread.
+- **Multimodal Payload Ingestion**: Comprehensive handling and metadata extraction for:
+  - **Voice Notes & Audio**: Downloaded with duration, artist, and track title metadata injected into the prompt context.
+  - **Video & Video Notes**: Ingested with resolution and duration parameters.
+  - **Locations & Venues**: Synthesizes geographic coordinates, venue names, and street addresses directly into AGY prompts.
+  - **vCard Contacts**: Parses contact name and phone number, saving `.vcf` attachment references.
+- **Concurrent Multi-Chat Job Queue (`maxConcurrent: 4`)**: The job queue now processes up to 4 distinct chats/topics concurrently while strictly maintaining FIFO sequential ordering per individual chat.
+- **Gemini 3.8 Flash Models**: Added `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, and `gemini-3.8-flash-low` with 1,000,000 token context window support, aligned with AGY CLI 1.1.25.
+- **Uncompressed Image Document Support**: Detects uncompressed image uploads sent as documents/files (`image/*`, `.png`, `.jpg`, `.webp`) and flows them directly into `imagePath` for vision model analysis.
+- **Scoped Temporary Directory Management**: Media and upload downloads are now isolated in dedicated session folders (`tempDir/chat_${chatId}`) with automated purging on `/new` and automatic cleanup for stale files (>24 hours).
+- **Expanded Top-Level AGY Commands**: Added `mic-serve`, `mcp`, and `models` to recognized AGY CLI commands.
+
+### Changed
+- **Session Settings Preservation on `/new`**: Starting a new session (`/new` or `action:new`) clears conversation history while preserving user-selected models, effort, sandbox mode, and preferences.
+- **Deprecated Model Cleanup**: Removed obsolete Gemini 3.5 variants (`gemini-3.5-flash-*`) from `DEFAULT_MODELS` to match latest AGY CLI specifications.
+- **Test Suite Isolation**: Added `envFile` configuration to prevent local test runner executions from touching or mutating host configuration files.
+
+### Fixed
+- **Clean Markdown Deep-Link Rendering**: Fixed Telegram entity parser for `conversation://` and `file:///` URLs to render cleanly as inline code (`<code>...</code>`) without unwanted backtick artifacts.
+- **Freeform `/agy` Prompt Execution**: Automatically prepends `--print` when typing freeform questions directly via `/agy <prompt>` instead of throwing command syntax errors.
+- **Dynamic SQLite Loading**: Implemented graceful dynamic loading for `node:sqlite` to enhance cross-environment runtime resilience.
+
 ## [0.3.1] - 2026-08-23
 
 ### Added
@@ -127,6 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone AGY Telegram gateway
 - TypeScript migration
 
+[0.4.0]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.2.0...v0.3.1
 [0.2.0]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/compare/v0.1.7...v0.1.8
