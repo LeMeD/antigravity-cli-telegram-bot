@@ -1,4 +1,4 @@
-name: "Intégration automatique des retours sur spécifications"
+name: "Automated Specification Feedback Integration"
 
 on:
   issue_comment:
@@ -10,14 +10,16 @@ permissions:
 
 jobs:
   update-spec:
-    name: Intégration du retour d'arbitrage
-    # Garde-fous stricts :
-    # 1. Dépôts personnels privés uniquement
-    # 2. Issue comportant le label 'spec' ou 'enhancement'
-    # 3. Commentaire émis par le propriétaire du dépôt
-    # 4. Exclusion des commentaires émis par des applications / bots
+    name: Integrate Specification Feedback
+    # Strict guards:
+    # 1. Private personal repositories only
+    # 2. Issue comments only (exclude pull requests)
+    # 3. Issue must have 'spec' or 'enhancement' label
+    # 4. Comment author must be repository owner
+    # 5. Exclude bot/app generated comments
     if: >-
       github.event.repository.private == true &&
+      github.event.issue.pull_request == null &&
       (contains(github.event.issue.labels.*.name, 'spec') || contains(github.event.issue.labels.*.name, 'enhancement')) &&
       github.event.comment.user.login == github.repository_owner &&
       !github.event.comment.performed_via_github_app
@@ -25,24 +27,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Récupération du dépôt
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configuration de Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
 
-      - name: Installation des dépendances
+      - name: Install dependencies
         run: |
           npm ci
           npm install --no-save @google/genai
 
-      - name: Analyse du retour et mise à jour de la spécification
+      - name: Analyze feedback and update specification
         env:
           EVENT_PATH: ${{ github.event_path }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
