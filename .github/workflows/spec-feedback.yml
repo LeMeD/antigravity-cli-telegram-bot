@@ -20,7 +20,11 @@ jobs:
     if: >-
       github.event.repository.private == true &&
       github.event.issue.pull_request == null &&
-      (contains(github.event.issue.labels.*.name, 'spec') || contains(github.event.issue.labels.*.name, 'enhancement')) &&
+      (contains(github.event.issue.labels.*.name, 'spec') ||
+       contains(github.event.issue.labels.*.name, 'spec-in-progress') ||
+       contains(github.event.issue.labels.*.name, 'ready-for-dev') ||
+       contains(github.event.issue.labels.*.name, 'idea') ||
+       contains(github.event.issue.labels.*.name, 'enhancement')) &&
       github.event.comment.user.login == github.repository_owner &&
       !github.event.comment.performed_via_github_app
 

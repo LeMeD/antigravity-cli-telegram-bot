@@ -32,12 +32,11 @@ if (!event.repository?.private) {
   process.exit(0);
 }
 
-// B. Presence of tracked label ('spec' or 'enhancement')
-const isTrackedIssue = event.issue?.labels?.some(
-  (l) => l.name === 'spec' || l.name === 'enhancement'
-);
+// B. Presence of tracked label ('spec', 'spec-in-progress', 'ready-for-dev', 'idea', 'enhancement')
+const TRACKED_LABELS = ['spec', 'spec-in-progress', 'ready-for-dev', 'idea', 'enhancement'];
+const isTrackedIssue = event.issue?.labels?.some((l) => TRACKED_LABELS.includes(l.name));
 if (!isTrackedIssue) {
-  console.log("Issue does not have 'spec' or 'enhancement' label. Skipping execution.");
+  console.log(`Issue does not have a tracked label (${TRACKED_LABELS.join(', ')}). Skipping execution.`);
   process.exit(0);
 }
 
@@ -181,6 +180,23 @@ if (isAbandonment) {
     }
   }
 
+  // Set abandoned label and remove active labels
+  try {
+    const labelsUrl = `https://api.github.com/repos/${repoFullName}/issues/${issueNumber}/labels`;
+    await fetch(labelsUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'Spec-Automation-Agent',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ labels: ['abandoned'] }),
+    });
+  } catch (err) {
+    console.warn('Could not add abandoned label:', err.message);
+  }
+
   await postIssueComment(
     `❌ **Piste ou spécification abandonnée et clôturée.**\n\nCette fonctionnalité ne sera pas implémentée conformément à votre arbitrage.`
   );
@@ -275,22 +291,25 @@ Analyse l'intention de Mehdi et exécute rigoureusement l'un des trois cas suiva
      -d '{"chat_id": "${TELEGRAM_CHAT_ID}", "message_thread_id": ${TELEGRAM_THREAD_ID ? Number(TELEGRAM_THREAD_ID) : 'null'}, "parse_mode": "HTML", "text": "💬 <b>Réponse d'\''Antigravity sur l'\''issue #${issueNumber} (${escapeHtml(issueTitle)})</b>\\n\\n<resume_de_ta_reponse>\\n\\n👉 <a href=\\"${issueUrl}\\\">Consulter la réponse complète sur GitHub</a>"}'
 
 ---
-#### CAS 2 : C'est une VALIDATION FINALE
+#### CAS 2 : C'est une VALIDATION FINALE de la spécification
 (Exemples : "OK", "Validé", "Approuvé", "C'est bon pour moi", "Prêt pour l'implémentation")
 1. Rédige ou consolide le document de spécification formel dans 'docs/specs/<nom-feature>.md' en respectant le gabarit officiel (Contexte & Objectifs, Flux Mermaid, Modèle de données & Contrats, Sécurité & Résilience, UX & Notifications, Scénarios de tests, Plan d'implémentation).
 2. Assure-toi que l'en-tête indique formellement :
    > **Statut :** Spécification validée (prête pour implémentation)
-3. Mets à jour 'BACKLOG.md' pour cocher la ligne correspondante (- [x] ...) et ajoute/actualise le lien Markdown vers 'docs/specs/<nom-feature>.md'.
+3. Mets à jour 'BACKLOG.md' pour actualiser la ligne correspondante au statut '[~]' (et non '[x]', le code n'étant pas encore développé/livré) et ajoute/actualise le lien Markdown vers 'docs/specs/<nom-feature>.md'.
 4. Committe et pousse les modifications sur Git :
    git config user.name "github-actions[bot]"
    git config user.email "github-actions[bot]@users.noreply.github.com"
    git add docs/specs/ BACKLOG.md
    git commit -m "docs(specs): finalize and validate specification for issue #${issueNumber}"
    git push origin ${defaultBranch}
-5. Poste un commentaire de clôture sur l'issue et clôture-la :
-   gh issue comment ${issueNumber} --body "✅ **Spécification validée et prête pour implémentation.**\\n\\nDocument consolidé : [\`docs/specs/<nom-feature>.md\`](${event.repository.html_url}/blob/${defaultBranch}/docs/specs/<nom-feature>.md)\\nCarnet de route actualisé."
-   gh issue close ${issueNumber} --reason completed
-6. Envoie une notification Telegram confirmant la validation et la clôture de l'issue.
+5. IMPORTANT — NE PAS FERMER L'ISSUE :
+   L'issue doit rester OUVERTE en attente d'implémentation.
+   Mets à jour les labels de l'issue pour refléter le passage en Stade 3 :
+   gh issue edit ${issueNumber} --remove-label "spec,spec-in-progress,idea" --add-label "ready-for-dev"
+6. Poste un commentaire confirmant la validation et précisant que l'issue reste ouverte :
+   gh issue comment ${issueNumber} --body "✅ **Spécification validée et prête pour implémentation.**\\n\\nDocument consolidé : [\`docs/specs/<nom-feature>.md\`](${event.repository.html_url}/blob/${defaultBranch}/docs/specs/<nom-feature>.md)\\n\\nL'issue reste ouverte avec le libellé \`ready-for-dev\` en attente de réalisation technique."
+7. Envoie une notification Telegram confirmant la validation et le passage de l'issue au statut 'ready-for-dev' (ouverte).
 
 ---
 #### CAS 3 : C'est un RETOUR D'AMENDEMENT, une proposition ou la création d'une nouvelle spec
