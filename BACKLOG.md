@@ -18,6 +18,8 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/28
 - [x] **PR #30** : Isolation des tours intermédiaires de délégation et de sous-agents dans des citations dépliables natives Telegram (`<blockquote expandable>`), avec ticker télémétrique compact et respect des modes de verbosité (`verbose: "detailed"` vs `compact`). *(Fusionnée dans upstream/main, clôture l'issue #29)*
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/30
+- [x] **PR #32** : Robustesse du parseur Telegram Markdown face aux blocs de code imbriqués (*nested code fences*), préservation des accolades TypeScript/JSON dans le texte ordinaire et découpage sécurisé aux frontières de mots (*word boundary split*). *(Fusionnée dans upstream/main)*
+  - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/32
 - [x] **Finalisation et intégration en production de la PR #30** :
   - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
 
