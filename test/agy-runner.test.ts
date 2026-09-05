@@ -131,3 +131,86 @@ test("attaches media file reference and directory in buildArgs", () => {
   assert.ok(args.includes("--add-dir"));
   assert.ok(args.includes("/tmp/uploads"));
 });
+
+test("isolates intermediate delegation preamble from final answer in parseStreamOutput", () => {
+  const stdout = [
+    JSON.stringify({ event: "init", conversation_id: "conv-sub", init: { model: "gemini-3.8-flash" } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "I will delegate this task to research subagent." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "subagent", subagent_info: { name: "research", role: "Codebase Researcher" } } }),
+    JSON.stringify({ event: "step_update", step_update: { text_delta: "Here is the definitive answer." } }),
+    JSON.stringify({ event: "result", result: { conversation_id: "conv-sub", status: "SUCCESS", response: "I will delegate this task to research subagent.\n\nHere is the definitive answer." } }),
+  ].join("\n");
+  const parsed = parseStreamOutput(stdout);
+  assert.equal(parsed.intermediateText, "I will delegate this task to research subagent.");
+  assert.equal(parsed.text, "Here is the definitive answer.");
+  assert.equal(parsed.toolCalls, 1);
+});
+
+test("preserves pure single-turn output without intermediateText", () => {
+  const stdout = [
+    JSON.stringify({ event: "init", conversation_id: "conv-single", init: { model: "gemini-3.8-flash" } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "Direct answer" } }),
+    JSON.stringify({ event: "result", result: { conversation_id: "conv-single", status: "SUCCESS", response: "Direct answer" } }),
+  ].join("\n");
+  const parsed = parseStreamOutput(stdout);
+  assert.equal(parsed.intermediateText, null);
+  assert.equal(parsed.text, "Direct answer");
+  assert.equal(parsed.toolCalls, 0);
+});
+
+test("formats subagent updates with role or name", () => {
+  assert.equal(formatStepUpdate({ subagent_info: { role: "Codebase Researcher" } }), "🤖 Subagent: Codebase Researcher");
+  assert.equal(formatStepUpdate({ subagent_info: { name: "research" } }), "🤖 Subagent: research");
+  assert.equal(formatStepUpdate({ subagent_info: {} }), "🤖 Delegating to subagent...");
+  assert.equal(formatStepUpdate({ step_type: "subagent" }), "🤖 Delegating to subagent...");
+});
+
+test("isolates multi-turn intermediate preambles even when response concatenates with single newlines", () => {
+  const stdout = [
+    JSON.stringify({ event: "init", conversation_id: "conv-multi", init: { model: "gemini-3.8-flash" } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "Subagent has been launched." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "subagent", subagent_info: { name: "research" } } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "Verification is in progress." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_type: "tool", tool_info: { name: "manage_subagents" } } }),
+    JSON.stringify({ event: "step_update", step_update: { text_delta: "Final summary: Node v24.20.0 LTS." } }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conv-multi",
+        status: "SUCCESS",
+        response: "Subagent has been launched.\nVerification is in progress.\nFinal summary: Node v24.20.0 LTS.",
+      },
+    }),
+  ].join("\n");
+  const parsed = parseStreamOutput(stdout);
+  assert.equal(parsed.intermediateText, "Subagent has been launched.\n\nVerification is in progress.");
+  assert.equal(parsed.text, "Final summary: Node v24.20.0 LTS.");
+  assert.equal(parsed.toolCalls, 2);
+});
+
+test("isolates intermediate waiting turns followed by system messages without intervening tools", () => {
+  const stdout = [
+    JSON.stringify({ event: "init", conversation_id: "conv-wait", init: { model: "gemini-3.8-flash" } }),
+    JSON.stringify({ event: "step_update", step_update: { step_index: 1, step_type: "agent_response", text_delta: "Subagent has been dispatched." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_index: 2, step_type: "subagent", subagent_info: { name: "research" } } }),
+    JSON.stringify({ event: "step_update", step_update: { step_index: 3, step_type: "agent_response", text_delta: "Subagent is finalizing the comparative summary." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_index: 4, step_type: "system_message", text_delta: "Report received from subagent." } }),
+    JSON.stringify({ event: "step_update", step_update: { step_index: 5, step_type: "agent_response", text_delta: "Here are the official findings: Node v24.20.0." } }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conv-wait",
+        status: "SUCCESS",
+        response: "Subagent has been dispatched.\nSubagent is finalizing the comparative summary.\nHere are the official findings: Node v24.20.0.",
+      },
+    }),
+  ].join("\n");
+  const parsed = parseStreamOutput(stdout);
+  assert.equal(parsed.intermediateText, "Subagent has been dispatched.\n\nSubagent is finalizing the comparative summary.");
+  assert.equal(parsed.text, "Here are the official findings: Node v24.20.0.");
+  assert.equal(parsed.toolCalls, 1);
+});
+
+
+
+
