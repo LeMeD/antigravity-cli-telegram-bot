@@ -1,9 +1,11 @@
 /**
- * Script d'intégration continue et autonome des spécifications Markdown.
+ * Script d'intégration continue et autonome des spécifications Markdown et du carnet de route.
  *
  * Déclenché par GitHub Actions sur l'événement `issue_comment`.
- * Analyse les arbitrages du propriétaire, met à jour le fichier Markdown de spécification
- * via Gemini Flash, committe les changements, commente l'issue et notifie sur Telegram.
+ * Analyse les arbitrages du propriétaire :
+ * - Validation / Approbation -> fige la spec, met à jour BACKLOG.md, clôture l'issue (completed), notifie sur Telegram.
+ * - Abandon / Rejet -> classe sans suite, barre la ligne dans BACKLOG.md, clôture l'issue (not_planned), notifie sur Telegram.
+ * - Amendement / Retours -> met à jour le fichier Markdown via Gemini Flash, committe, commente l'issue et notifie sur Telegram.
  */
 
 import fs from 'node:fs';
@@ -35,10 +37,12 @@ if (!event.repository?.private) {
   process.exit(0);
 }
 
-// B. Présence du label "spec"
-const isSpecIssue = event.issue?.labels?.some((l) => l.name === 'spec');
-if (!isSpecIssue) {
-  console.log("L'issue ne comporte pas le label 'spec'. Exécution ignorée.");
+// B. Présence d'un label suivi ('spec' ou 'enhancement')
+const isTrackedIssue = event.issue?.labels?.some(
+  (l) => l.name === 'spec' || l.name === 'enhancement'
+);
+if (!isTrackedIssue) {
+  console.log("L'issue ne comporte ni le label 'spec' ni 'enhancement'. Exécution ignorée.");
   process.exit(0);
 }
 
@@ -114,9 +118,11 @@ async function postIssueComment(body) {
   });
 }
 
-async function closeIssue() {
+async function closeIssue(reason = 'completed') {
   if (!GITHUB_TOKEN) return;
   const url = `https://api.github.com/repos/${repoFullName}/issues/${issueNumber}`;
+  const payload = { state: 'closed' };
+  if (reason) payload.state_reason = reason;
   await fetch(url, {
     method: 'PATCH',
     headers: {
@@ -125,11 +131,11 @@ async function closeIssue() {
       'User-Agent': 'Spec-Automation-Agent',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ state: 'closed' }),
+    body: JSON.stringify(payload),
   });
 }
 
-// 3. Résolution du fichier de spécification concerné
+// 3. Résolution du fichier de spécification concerné (optionnel pour l'abandon)
 function resolveSpecFile() {
   const issueBody = event.issue.body || '';
   // Recherche par balise explicite
@@ -163,21 +169,101 @@ function resolveSpecFile() {
 }
 
 const specFile = resolveSpecFile();
-if (!specFile) {
-  console.error('Impossible d\'identifier le fichier de spécification associé.');
-  process.exit(1);
-}
+console.log(`Spécification ciblée : ${specFile || 'Aucune (issue de feuille de route pure)'}`);
 
-console.log(`Spécification ciblée : ${specFile}`);
-
-// 4. Cas 1 : Validation finale (l'utilisateur approuve la spécification)
+// 4. Détection des intentions d'arbitrage
 const isApproval =
   /^(ok|validé|valide|approuvé|approuve|conforme|terminé|clôturer|merci ok)\b/i.test(commentBody) ||
   /^\/valider\b/i.test(commentBody) ||
   /^\/ok\b/i.test(commentBody);
 
+const isAbandonment =
+  /^(abandon|abandonné|abandonne|annulé|annule|rejeté|rejeter|refusé|refuser|sans suite|ne pas faire|stop)\b/i.test(commentBody) ||
+  /^\/abandon\b/i.test(commentBody) ||
+  /^\/cancel\b/i.test(commentBody);
+
+// 5. Cas 1 : Abandon / Rejet de la spécification ou de la piste de roadmap
+if (isAbandonment) {
+  console.log("Abandon détecté. Clôture de l'issue et mise à jour du carnet de route.");
+  const today = new Date().toISOString().slice(0, 10);
+  const filesToCommit = [];
+
+  // Mise à jour du document Markdown de spec si présent
+  if (specFile && fs.existsSync(specFile)) {
+    let specContent = fs.readFileSync(specFile, 'utf-8');
+    specContent = specContent.replace(
+      /> \*\*Statut :\*\*.*/,
+      `> **Statut :** Spécification abandonnée  \n> **Date d'abandon :** ${today}`
+    );
+    fs.writeFileSync(specFile, specContent, 'utf-8');
+    filesToCommit.push(specFile);
+  }
+
+  // Mise à jour de BACKLOG.md ou TODO.md si présent
+  let backlogFile = null;
+  if (fs.existsSync('BACKLOG.md')) backlogFile = 'BACKLOG.md';
+  else if (fs.existsSync('TODO.md')) backlogFile = 'TODO.md';
+
+  if (backlogFile) {
+    let backlog = fs.readFileSync(backlogFile, 'utf-8');
+    const specBasename = specFile ? specFile.split('/').pop() : null;
+
+    // 1. Recherche prioritaire par numéro d'issue : [Issue #X]
+    const issueLinkRegex = new RegExp(`- \\[([ x~])\\] (.*?\\[Issue #${issueNumber}\\].*)`, 'g');
+    if (issueLinkRegex.test(backlog)) {
+      backlog = backlog.replace(issueLinkRegex, (match, check, rest) => {
+        const cleanRest = rest.replace(/^~~(.*)~~/, '$1');
+        return `- [ ] ~~${cleanRest}~~ *(Piste abandonnée suite à arbitrage sur [Issue #${issueNumber}])*`;
+      });
+    } else if (specBasename) {
+      // 2. Recherche par nom de fichier de spec
+      const specRegex = new RegExp(`- \\[([ x~])\\] (.*${specBasename}.*)`, 'g');
+      backlog = backlog.replace(specRegex, (match, check, rest) => {
+        const cleanRest = rest.replace(/^~~(.*)~~/, '$1');
+        return `- [ ] ~~${cleanRest}~~ *(Piste abandonnée)*`;
+      });
+    }
+    fs.writeFileSync(backlogFile, backlog, 'utf-8');
+    filesToCommit.push(backlogFile);
+  }
+
+  // Git commit & push si des modifications ont eu lieu
+  if (filesToCommit.length > 0) {
+    execSync('git config user.name "github-actions[bot]"');
+    execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+    execSync(`git add ${filesToCommit.map((f) => `"${f}"`).join(' ')}`);
+    execSync(`git commit -m "docs(backlog): abandon de la piste suite à confirmation issue #${issueNumber}"`);
+    execSync(`git push origin ${defaultBranch}`);
+  }
+
+  await postIssueComment(
+    `❌ **Piste ou spécification abandonnée et clôturée.**\n\nCette fonctionnalité ne sera pas implémentée conformément à votre arbitrage.`
+  );
+
+  await closeIssue('not_planned');
+
+  await sendTelegramMessage(
+    `❌ <b>Piste / Spécification abandonnée et clôturée</b>\n\n` +
+      (specFile ? `📄 <b>Document :</b> <code>${specFile}</code>\n` : '') +
+      `📌 <b>Issue :</b> <a href="${event.issue.html_url}">#${issueNumber} ${escapeHtml(event.issue.title)}</a>\n\n` +
+      `<i>Cette fonctionnalité a été classée sans suite conformément à votre arbitrage.</i>`
+  );
+
+  console.log('Clôture par abandon effectuée avec succès.');
+  process.exit(0);
+}
+
+// 6. Cas 2 : Validation finale (l'utilisateur approuve la spécification)
 if (isApproval) {
-  console.log('Approbation détectée. Clôture de l\'issue et validation de la spécification.');
+  if (!specFile) {
+    await postIssueComment(
+      `🎉 **Piste validée et clôturée !**\n\nCette piste a été approuvée.`
+    );
+    await closeIssue('completed');
+    process.exit(0);
+  }
+
+  console.log("Approbation détectée. Clôture de l'issue et validation de la spécification.");
   const today = new Date().toISOString().slice(0, 10);
   let specContent = fs.readFileSync(specFile, 'utf-8');
 
@@ -196,10 +282,10 @@ if (isApproval) {
   if (backlogFile) {
     let backlog = fs.readFileSync(backlogFile, 'utf-8');
     const specBasename = specFile.split('/').pop();
-    // Passe les cases [ ] ou [~] associées à cette spec à [x] ou validé
+    // Passe les cases [ ] ou [~] associées à cette spec à [x]
     backlog = backlog.replace(
       new RegExp(`\\[[ ~]\\] (.*${specBasename}.*)`, 'g'),
-      '[~] $1'
+      '[x] $1'
     );
     fs.writeFileSync(backlogFile, backlog, 'utf-8');
   }
@@ -215,7 +301,7 @@ if (isApproval) {
     `🎉 **Spécification validée et clôturée !**\n\nLe document [\`${specFile}\`](${event.repository.html_url}/blob/${defaultBranch}/${specFile}) est désormais figé et prêt pour l'implémentation.`
   );
 
-  await closeIssue();
+  await closeIssue('completed');
 
   await sendTelegramMessage(
     `🎉 <b>Spécification validée et clôturée</b>\n\n` +
@@ -228,7 +314,15 @@ if (isApproval) {
   process.exit(0);
 }
 
-// 5. Cas 2 : Amendement / Arbitrage à intégrer via Gemini Flash
+// 7. Cas 3 : Amendement / Arbitrage à intégrer via Gemini Flash
+if (!specFile) {
+  console.log('Issue de feuille de route sans fichier de spécification lié. Aucun document à amender.');
+  await postIssueComment(
+    `💡 **Aucun document de spécification lié.**\n\nCette issue de feuille de route ne comporte pas encore de document \`docs/specs/*.md\`. Vous pouvez demander à l'assistant d'en rédiger l'ébauche initiale pour démarrer la co-conception.`
+  );
+  process.exit(0);
+}
+
 console.log('Analyse du retour utilisateur via Gemini...');
 if (!GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY manquant.');
@@ -390,7 +484,7 @@ if (analysis.updated_spec) {
     ? `### 🔄 Ce qui a changé\n${analysis.change_summary}\n\n`
     : '';
   const nextStepSection = `### ❓ Prochaine étape\n${
-    analysis.next_step || 'Si cette version vous convient, répondez simplement **OK** pour figer la spécification et lancer l\'implémentation.'
+    analysis.next_step || "Si cette version vous convient, répondez simplement **OK** pour figer la spécification et lancer l'implémentation."
   }\n\n`;
 
   const githubComment =

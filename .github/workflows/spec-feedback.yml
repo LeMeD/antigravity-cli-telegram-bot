@@ -13,12 +13,12 @@ jobs:
     name: Intégration du retour d'arbitrage
     # Garde-fous stricts :
     # 1. Dépôts personnels privés uniquement
-    # 2. Issue comportant le label 'spec'
+    # 2. Issue comportant le label 'spec' ou 'enhancement'
     # 3. Commentaire émis par le propriétaire du dépôt
     # 4. Exclusion des commentaires émis par des applications / bots
     if: >-
       github.event.repository.private == true &&
-      contains(github.event.issue.labels.*.name, 'spec') &&
+      (contains(github.event.issue.labels.*.name, 'spec') || contains(github.event.issue.labels.*.name, 'enhancement')) &&
       github.event.comment.user.login == github.repository_owner &&
       !github.event.comment.performed_via_github_app
 
