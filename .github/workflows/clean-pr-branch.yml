@@ -32,23 +32,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create and switch to mirror branch
-          git checkout -B "$PR_BRANCH"
+          # Add upstream remote and fetch upstream/main
+          git remote add upstream https://github.com/ardiannurcahya/antigravity-cli-telegram-bot.git || true
+          git fetch upstream main
+
+          # Switch to clean mirror branch based directly on upstream/main
+          git checkout -B "$PR_BRANCH" upstream/main
+
+          # Squash merge changes from source branch
+          git merge --squash "$SRC_BRANCH"
 
           # Remove internal fork items (roadmap, specs, local skills, internal scripts, and private workflows)
-          MODIFIED=0
           for target in BACKLOG.md docs .agents scripts .github/workflows/clean-pr-branch.yml .github/workflows/spec-feedback.yml; do
             if [ -e "$target" ]; then
               echo "Removing internal item: $target"
               git rm -rf "$target"
-              MODIFIED=1
             fi
           done
 
-          # Create cleanup commit only if files were removed
-          if [ $MODIFIED -eq 1 ]; then
-            git commit -m "chore: strip internal documentation and fork workflow for upstream PR"
+          # Only commit and push if there are staged differences against upstream/main
+          if ! git diff --cached --quiet; then
+            COMMIT_MSG=$(git log upstream/main.."$SRC_BRANCH" --grep="^docs(backlog)" --invert-grep --grep="^refactor: translate" --invert-grep --grep="^chore: strip" --format=%s | tail -n 1)
+            if [ -z "$COMMIT_MSG" ]; then
+              COMMIT_MSG="chore: contribution for upstream PR"
+            fi
+            git commit -m "$COMMIT_MSG"
+            git push origin "$PR_BRANCH" --force
           fi
-
-          # Force push mirror branch to fork repository
-          git push origin "$PR_BRANCH" --force
