@@ -37,29 +37,39 @@ npm run build
 ```
 
 ### Étape 2 : Lancement du runner temporaire de test
-Démarrer le bot de test en précisant explicitement le fichier d'environnement dédié :
+Démarrer le bot de test en tâche complètement détachée pour ne jamais bloquer la session CLI ni suspendre la passerelle Telegram.
+
+La méthode recommandée sous Linux est d'utiliser une unité transitoire systemd utilisateur :
 
 ```bash
-AGY_ENV_FILE=$HOME/.config/agy-telegram-test/.env node dist/cli.js
+systemd-run --user --unit=agy-telegram-test env AGY_ENV_FILE="$HOME/.config/agy-telegram-test/.env" node /home/med/projets/agy-telegram/dist/cli.js
 ```
 
-> **Note :** Si exécuté par un agent, ce processus doit être lancé en tâche de fond (ou terminal persistant) pendant toute la phase de vérification interactive sur Telegram.
+*(Alternative sans systemd : `nohup env AGY_ENV_FILE="$HOME/.config/agy-telegram-test/.env" node dist/cli.js < /dev/null > "$HOME/.config/agy-telegram-test/runner.log" 2>&1 & echo $! > "$HOME/.config/agy-telegram-test/runner.pid"`)*
+
+> ⚠️ **Directive stricte pour l'agent :** Ne JAMAIS lancer ce processus directement ou en tâche d'arrière-plan interne Antigravity (`run_command` sans détachement complet). En mode non-interactif (`agy --print`), le processus parent resterait bloqué indéfiniment en attendant la fin du sous-processus.
+
+Vérifier immédiatement le bon démarrage sans erreur dans le journal :
+```bash
+journalctl --user -u agy-telegram-test --no-pager -n 15
+```
 
 ### Étape 3 : Validation interactive sur Telegram
 1. Ouvrir la conversation Telegram avec le bot de test ([@Chromie_lemed_test_bot](https://t.me/Chromie_lemed_test_bot) ou ID `8797558243`).
 2. Exécuter les scénarios de test ciblés par l'évolution :
    * Commandes usuelles (`/start`, `/menu`, `/model`, `/workspace`, etc.).
    * Prompts spécifiques testant la nouvelle fonctionnalité.
-   * Vérification des transitions, retours visuels et absence d'erreur dans la console du runner.
+   * Vérification des transitions, retours visuels et absence d'erreur dans les journaux (`journalctl --user -u agy-telegram-test -f`).
 
 ### Étape 4 : Arrêt obligatoire dès soumission de la pull request
 > ⚠️ **Règle absolue :** Dès que la validation est concluante et que la pull request vers l'amont (*upstream*) est ouverte et soumise, **le runner temporaire de test doit être immédiatement arrêté**.
 
-Arrêter le processus en cours d'exécution :
+Arrêter l'unité transitoire systemd :
 ```bash
-pkill -f "agy-telegram-test"
+systemctl --user stop agy-telegram-test
 ```
-Ou terminer la tâche d'arrière-plan correspondante. Aucun runner éphémère ne doit continuer de tourner en tâche de fond après l'ouverture de la pull request.
+
+*(En méthode alternative PID : `[ -f "$HOME/.config/agy-telegram-test/runner.pid" ] && kill "$(cat "$HOME/.config/agy-telegram-test/runner.pid")" 2>/dev/null && rm -f "$HOME/.config/agy-telegram-test/runner.pid"`)*
 
 ---
 
@@ -68,5 +78,6 @@ Ou terminer la tâche d'arrière-plan correspondante. Aucun runner éphémère n
 Action | Commande
 :--- | :---
 **Compiler** | `npm run build`
-**Lancer le runner de test** | `AGY_ENV_FILE=$HOME/.config/agy-telegram-test/.env node dist/cli.js`
-**Arrêter le runner de test** | `pkill -f "agy-telegram-test"` ou interruption de la tâche
+**Lancer le runner (systemd)** | `systemd-run --user --unit=agy-telegram-test env AGY_ENV_FILE="$HOME/.config/agy-telegram-test/.env" node /home/med/projets/agy-telegram/dist/cli.js`
+**Vérifier le statut / logs** | `journalctl --user -u agy-telegram-test --no-pager -n 15`
+**Arrêter le runner de test** | `systemctl --user stop agy-telegram-test`
