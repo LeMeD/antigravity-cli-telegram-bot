@@ -85,7 +85,14 @@ test("does not break a large code block when chunking", () => {
 
 test("escapeHtml properly escapes reserved HTML characters", () => {
   assert.equal(escapeHtml("<script>alert('xss') & test</script>"), "&lt;script&gt;alert('xss') &amp; test&lt;/script&gt;");
-  assert.equal(escapeHtml('Audit <Repo> & "Deploy"'), "Audit &lt;Repo&gt; &amp; &quot;Deploy&quot;");
+  assert.equal(escapeHtml('Audit <Repo> & "Deploy"'), 'Audit &lt;Repo&gt; &amp; "Deploy"');
+});
+
+test("formatTelegramHtml preserves double quotes in code blocks without escaping to &quot;", () => {
+  const markdown = '```python\nwith open("test.txt", "r", encoding="utf-8") as f:\n    data = f.read()\n```';
+  const html = formatTelegramHtml(markdown);
+  assert.ok(html.includes('<pre><code class="language-python">with open("test.txt", "r", encoding="utf-8") as f:'));
+  assert.doesNotMatch(html, /&quot;/);
 });
 
 test("findReferencedMediaFiles detects markdown images and file paths", async () => {
@@ -130,6 +137,39 @@ test("formats blockquotes and GitHub-style alerts into native Telegram blockquot
   assert.ok(html.includes("<blockquote>💡 <b>Tip</b>\nThis is a helpful tip\nwith multiple lines</blockquote>"));
   assert.ok(html.includes("<blockquote>⚠️ <b>Warning</b>\nHigh battery temperature</blockquote>"));
   assert.ok(html.includes("<blockquote>Standard quoted text</blockquote>"));
+});
+
+test("formats expandable blockquotes into native Telegram expandable blockquotes", () => {
+  const markdown = "**> 🤖 Context & delegation:**\n**> I will delegate to research.\n\nFinal answer.";
+  const html = formatTelegramHtml(markdown);
+  assert.ok(html.includes("<blockquote expandable>🤖 Context &amp; delegation:\nI will delegate to research.</blockquote>"));
+  assert.ok(html.includes("Final answer."));
+});
+
+test("preserves preformatted HTML expandable blockquotes and chunking", () => {
+  const input = "<blockquote expandable>Expandable content</blockquote>\n\nOther text";
+  const html = formatTelegramHtml(input);
+  assert.ok(html.includes("<blockquote expandable>Expandable content</blockquote>"));
+
+  const chunks = formatTelegramHtmlChunks("<blockquote expandable>" + "a".repeat(500) + "</blockquote>", 200);
+  assert.ok(chunks.length > 1);
+  for (const chunk of chunks) {
+    assert.ok(chunk.startsWith("<blockquote expandable>"));
+    assert.ok(chunk.endsWith("</blockquote>"));
+  }
+});
+
+test("sanitizes HTML injection and escapes reserved characters inside preformatted blockquotes", () => {
+  const dangerous = '<blockquote expandable><script>alert("xss")</script>\n<a href="https://phishing.com">malicious</a>\nx < 10 & y > 20</blockquote>';
+  const html = formatTelegramHtml(dangerous);
+
+  assert.ok(html.startsWith("<blockquote expandable>"));
+  assert.ok(html.endsWith("</blockquote>"));
+  assert.doesNotMatch(html, /<script>/);
+  assert.doesNotMatch(html, /<a href="https:\/\/phishing\.com">/);
+  assert.ok(html.includes('&lt;script&gt;alert("xss")&lt;/script&gt;'));
+  assert.ok(html.includes('&lt;a href="https://phishing.com"&gt;malicious&lt;/a&gt;'));
+  assert.ok(html.includes("x &lt; 10 &amp; y &gt; 20"));
 });
 
 test("formats interactive checkboxes and hierarchical nested lists", () => {
