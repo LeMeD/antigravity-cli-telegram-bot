@@ -1,0 +1,54 @@
+name: "Intégration automatique des retours sur spécifications"
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  update-spec:
+    name: Intégration du retour d'arbitrage
+    # Garde-fous stricts :
+    # 1. Dépôts personnels privés uniquement
+    # 2. Issue comportant le label 'spec'
+    # 3. Commentaire émis par le propriétaire du dépôt
+    # 4. Exclusion des commentaires émis par des applications / bots
+    if: >-
+      github.event.repository.private == true &&
+      contains(github.event.issue.labels.*.name, 'spec') &&
+      github.event.comment.user.login == github.repository_owner &&
+      !github.event.comment.performed_via_github_app
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupération du dépôt
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Installation des dépendances
+        run: |
+          npm ci
+          npm install --no-save @google/genai
+
+      - name: Analyse du retour et mise à jour de la spécification
+        env:
+          EVENT_PATH: ${{ github.event_path }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
+          GEMINI_MODEL: "gemini-3.5-flash-lite"
+        run: node scripts/update-spec-from-comment.mjs
