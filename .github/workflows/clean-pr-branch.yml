@@ -52,7 +52,10 @@ jobs:
 
           # Only commit and push if there are staged differences against upstream/main
           if ! git diff --cached --quiet; then
-            COMMIT_MSG=$(git log upstream/main.."$SRC_BRANCH" --grep="^docs(backlog)" --invert-grep --grep="^refactor: translate" --invert-grep --grep="^chore: strip" --format=%s | tail -n 1)
+            COMMIT_MSG=$(git log upstream/main.."$SRC_BRANCH" --grep="^docs(backlog)" --invert-grep --grep="^refactor: translate" --invert-grep --grep="^chore: strip" --grep="^ci" --invert-grep --format=%s | head -n 1)
+            if [ -z "$COMMIT_MSG" ]; then
+              COMMIT_MSG=$(git log -1 --format=%s "$SRC_BRANCH")
+            fi
             if [ -z "$COMMIT_MSG" ]; then
               COMMIT_MSG="chore: contribution for upstream PR"
             fi
