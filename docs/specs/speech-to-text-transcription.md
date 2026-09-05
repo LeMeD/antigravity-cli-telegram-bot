@@ -1,7 +1,8 @@
 # Spécifications fonctionnelles et techniques : Transcription vocale automatique (Speech-to-Text)
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification validée (prête pour implémentation)  
+> **Statut :** Spécification abandonnée  
+> **Date d'abandon :** 2026-09-05
 > **Date de rédaction :** 03/09/2026  
 > **Version cible :** v0.5.0  
 
