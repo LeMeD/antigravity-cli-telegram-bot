@@ -150,7 +150,7 @@ if (isAbandonment) {
 
   if (backlogFile) {
     let backlog = fs.readFileSync(backlogFile, 'utf-8');
-    const issueLinkRegex = new RegExp(`- \\\\[([ x~])\\\\] (.*?\\\\[Issue #${issueNumber}\\\\].*)`, 'g');
+    const issueLinkRegex = new RegExp(`- \\\[([ x~])\\\] (.*?\\\[Issue #${issueNumber}\\].*)`, 'g');
     if (issueLinkRegex.test(backlog)) {
       backlog = backlog.replace(issueLinkRegex, (match, check, rest) => {
         const cleanRest = rest.replace(/^~~(.*)~~/, '$1');
