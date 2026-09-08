@@ -1,10 +1,10 @@
 # Spécifications fonctionnelles et techniques : Isolation de workspace par session (/workspace)
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification validée (en cours d'implémentation)  
-> **Date de rédaction :** 03/09/2026  
+> **Statut :** Spécification en cours de rédaction  
+> **Date de rédaction :** 03/09/2026 (actualisé le 08/09/2026)  
 > **Version cible :** v0.5.0  
-> **Issue associée :** [#26](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/26)
+> **Issues associées :** [#26](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/26), [#6](https://github.com/LeMeD/agy-telegram-private/issues/6)
 
 ---
 
@@ -19,7 +19,7 @@ Lorsqu'un utilisateur souhaite utiliser le bot pour développer sur un dépôt l
 
 ### Objectifs cibles
 1. **Isolation granulaire par session** : Permettre d'assigner un répertoire de travail spécifique (`cwd`) à une session Telegram (chat direct 1:1 ou forum topic de supergroupe) via `/workspace <nom|chemin>`.
-2. **Modèle mental étanche (Option A)** :
+2. **Modèle mental étanche et cycle de session** :
    - En **chat privé (1:1)** : Portée éphémère. Tout `/new` réinitialise le dialogue et rétablit automatiquement le workspace global `AGY_WORKSPACE` afin d'éviter tout verrouillage accidentel lors des tâches de la vie courante.
    - En **forum topic** : Portée persistante. Un fil dédié à un projet conserve sa liaison au répertoire cible même après `/new`.
 3. **Sécurité et confinement strict** : Restreindre les chemins sélectionnables aux sous-dossiers autorisés via une racine de projets (`AGY_PROJECTS_ROOT`), avec contrôle strict de non-traversée (`isWithin`).
@@ -140,7 +140,7 @@ export function resolveWorkspacePath(
 | **TC-WS-05** | Tentative de path traversal | `/workspace ../../etc` ou `/workspace /etc` | Rejet avec message d'erreur de sécurité. |
 | **TC-WS-06** | Dossier inexistant | `/workspace projet-inexistant` | Rejet indiquant que le répertoire n'existe pas. |
 | **TC-WS-07** | `/workspace clear` | `/workspace clear` | Restaure le workspace global par défaut. |
-| **TC-WS-08** | `/new` en chat 1:1 (Option A) | `/new` après `/workspace` en DM | Workspace réinitialisé vers `AGY_WORKSPACE`. |
+| **TC-WS-08** | `/new` en chat 1:1 | `/new` après `/workspace` en DM | Workspace réinitialisé vers `AGY_WORKSPACE`. |
 | **TC-WS-09** | `/new` en forum topic | `/new` après `/workspace` en Topic | Workspace du topic conservé. |
 | **TC-WS-10** | Rappel de workspace au prompt | Prompt sur session personnalisée | Bannière de rappel du workspace forcé dans le message initial. |
 
@@ -152,5 +152,5 @@ export function resolveWorkspacePath(
 2. **Étape 2 : Autocomplétion native Telegram (`src/bot.ts`)** (ajout de `workspace` dans `BOT_COMMANDS`).
 3. **Étape 3 : Clavier interactif de sélection (`src/ui/inline-keyboards.ts`, `src/router/callbacks.ts`, `src/ui/screens.ts`)**.
 4. **Étape 4 : Bannière de rappel de workspace au prompt (`src/usecases/prompt-job.ts`)**.
-5. **Étape 5 : Mise à jour de la documentation (`README.md`, `BACKLOG.md`)**.
-6. **Étape 6 : Tests unitaires automatisés et validation de non-régression (`test/workspace.test.ts`)**.
+5. **Étape 5 : Mise à jour de la documentation (`README.md`, `BACKLOG.md`)** : harmonisation sous le sous-titre de section `#### Session Lifecycle and Scoping Behavior` et suppression des mentions résiduelles d'« Option A » (`README.md:L75`, `README.md:L295`).
+6. **Étape 6 : Tests unitaires automatisés et validation de non-régression (`test/workspace.test.ts`)** : alignement de l'intitulé du test unitaire (`test/workspace.test.ts:L94`) sans mention d'Option A.
