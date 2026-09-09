@@ -11,7 +11,7 @@ streamed progress, model controls, and a hardened systemd deployment.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![CI](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agy-telegram?logo=npm&logoColor=white)](https://www.npmjs.com/package/agy-telegram)
-[![Tests](https://img.shields.io/badge/tests-120%20passing-2ea44f)](./test)
+[![Tests](https://img.shields.io/badge/tests-170%20passing-2ea44f)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 </div>
@@ -33,6 +33,7 @@ service under a dedicated Unix user.
 - [Install From npm](#install-from-npm)
 - [Install From GitHub Packages](#install-from-github-packages)
 - [Telegram Commands](#telegram-commands)
+- [Voice & Audio (STT & TTS)](#voice--audio-stt--tts)
 - [Configuration](#configuration)
 - [Production Deployment](#production-deployment)
 - [Security Model](#security-model)
@@ -52,6 +53,8 @@ service under a dedicated Unix user.
 - One global AGY job at a time to protect a small VPS with `isDraining` queue lock guard.
 - Per-chat AGY conversation mapping when AGY returns a conversation ID.
 - Multimodal photo and document file attachment support (`.pdf`, `.txt`, `.md`, `.json`, `.csv`, `.py`, `.go`, etc.) automatically saved to `${AGY_WORKSPACE}/uploads/`.
+- Voice note Speech-to-Text (STT) transcription with provider choice (`whisper-local`, `gemini`, `agy`).
+- Text-to-Speech (TTS) voice responses using `edge-tts` with selectable multilingual neural voices and smart playback modes (`off`, `auto`, `voice-only`, `voice-and-text`).
 - Per-chat model, effort, execution mode, and sandbox settings.
 - Persistent reply keyboard beside the Telegram input.
 - Persistent keyboard limited to Model and Mode controls.
@@ -138,6 +141,7 @@ time-limited and can be aborted immediately with `/cancel`.
 - A Telegram bot created through [BotFather].
 - A writable, dedicated AGY workspace.
 - A Telegram user ID to add to the allowlist.
+- *(Optional, for Voice Notes / STT / TTS)*: `ffmpeg` for audio conversion, `edge-tts` for Text-to-Speech, and `whisper` (or AGY/Gemini API key) for Speech-to-Text.
 
 For production, install AGY at `/usr/local/bin/agy` and run this gateway as a
 dedicated `agybot` user. Running the bot as root is not recommended.
@@ -269,6 +273,8 @@ system prefix.
 | `/new-project on\|off` | Toggle `--new-project` for future prompts. |
 | `/disable-slash-commands on\|off` | Toggle `--disable-slash-commands` for future prompts. |
 | `/workspace [NAME\|PATH\|clear]` | Show active workspace, switch to a project directory, or reset to default. |
+| `/stt [provider\|model\|lang]` | Configure Speech-to-Text provider (`whisper-local`, `gemini`, `agy`), model, or language. |
+| `/tts [mode\|voice]` | Configure Text-to-Speech playback mode (`off`, `auto`, `voice-only`, `voice-and-text`) or voice. |
 
 Any other text is treated as an AGY prompt. `/agy` accepts the complete
 non-interactive flag surface shown by `agy --help`, including repeatable
@@ -341,6 +347,107 @@ selected conversation with `--conversation`; this takes precedence over
 `--continue`. `/new` clears the active conversation and its accumulated run
 usage while preserving the chat's model and execution settings.
 
+## Voice & Audio (STT & TTS)
+
+The gateway supports bidirectional voice interaction: you can send Telegram voice messages (or audio notes) which are automatically transcribed into AGY prompts, and optionally receive AGY responses read aloud as Telegram voice messages.
+
+```text
+                  Telegram Voice Note (.ogg / Opus)
+                               │
+                               ▼
+                    Speech-to-Text (STT)
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+ whisper-local               gemini                   agy
+(OpenAI Whisper CLI)   (Gemini Flash 2.5 API)   (Local AGY Multimodal)
+       │                       │                       │
+       └───────────────────────┼───────────────────────┘
+                               │
+                       Transcribed Prompt
+                               │
+                               ▼
+                       Antigravity (AGY)
+                               │
+                        Model Response
+                               │
+                               ▼
+                     Text-to-Speech (TTS)
+                         [edge-tts]
+                               │ (MP3 synthesis)
+                               ▼
+                           [ffmpeg]
+                               │ (Convert MP3 -> OGG Opus)
+                               ▼
+                 Telegram Voice Message Bubble
+```
+
+### 1. Speech-to-Text (STT)
+
+When a voice note is received, the bot downloads the audio and transcribes it using the active provider:
+
+- **`whisper-local`**: Runs a local Whisper CLI binary (e.g. `whisper` or `whisper-cpp`). Ideal for offline transcription and privacy.
+- **`gemini`**: Transcribes via Google Gemini's audio API (requires `GEMINI_API_KEY` or `STT_GEMINI_API_KEY`). Extremely fast and handles multilingual voice cleanly.
+- **`agy`**: Passes the audio file directly as a multimodal payload to AGY using an internal transcription prompt.
+
+Configure the STT provider per session using `/stt`:
+```text
+/stt provider whisper-local
+/stt provider gemini
+/stt model gemini-2.5-flash
+/stt lang de
+```
+
+### 2. Text-to-Speech (TTS) Setup
+
+For Text-to-Speech voice answers, the gateway uses Microsoft Edge TTS (`edge-tts`) combined with `ffmpeg` to generate native Telegram voice notes (OGG Opus format).
+
+#### Prerequisites & Installation
+
+1. **Install `ffmpeg`** (required for encoding voice notes to OGG Opus):
+   ```bash
+   # Debian / Ubuntu
+   sudo apt update && sudo apt install -y ffmpeg
+
+   # Arch / CachyOS
+   sudo pacman -S ffmpeg
+   ```
+
+2. **Install `edge-tts`**:
+   Install `edge-tts` using `pipx` (recommended) or `pip` into your system or service user's PATH:
+   ```bash
+   # Recommended (isolated CLI application)
+   pipx install edge-tts
+
+   # Or via pip
+   pip install --user edge-tts
+   ```
+
+3. **Verify the installation & available voices**:
+   ```bash
+   edge-tts --list-voices
+   ```
+
+4. **Configure `TTS_BIN`**:
+   Ensure `TTS_BIN` points to the executable location in your environment file:
+   ```dotenv
+   TTS_BIN=/usr/local/bin/edge-tts
+   # or for user installs:
+   # TTS_BIN=/home/agybot/.local/bin/edge-tts
+   ```
+
+#### Usage & Playback Modes
+
+Configure TTS behavior per session using `/tts`:
+```text
+/tts mode auto             # Voice response only when prompt was a voice note (default: off)
+/tts mode voice-only       # Voice response only without text bubble
+/tts mode voice-and-text   # Both voice response and text bubble
+/tts voice en-US-AndrewMultilingualNeural
+/tts voice de-DE-FlorianMultilingualNeural
+```
+
+Code blocks, raw markdown links, and backticks are automatically filtered out of spoken text to produce clean, natural speech.
+
 ## Configuration
 
 Copy `.env.example` to an environment file outside the repository. The
@@ -372,6 +479,18 @@ following variables are supported:
 | `STATE_FILE` | `/var/lib/agy-telegram/state.json` | Persistent offset, sessions, settings, and usage. |
 | `TEMP_DIR` | `/var/lib/agy-telegram/tmp` | Runtime temporary directory. |
 | `LOG_LEVEL` | `info` | Reserved logging-level setting. |
+| `STT_PROVIDER` | `none` | Speech-to-Text provider: `whisper-local`, `gemini`, `agy`, or `none`. |
+| `STT_WHISPER_BIN` | `whisper` | Binary name or absolute path for local Whisper CLI. |
+| `STT_WHISPER_MODEL` | `base` | Model name for Whisper local transcription (e.g. `base`, `small`, `medium`). |
+| `STT_GEMINI_API_KEY` | Empty | Optional Gemini API key for `gemini` STT provider (falls back to `GEMINI_API_KEY`). |
+| `STT_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for audio transcription. |
+| `STT_AGY_MODEL` | `gemini-3.8-flash-low` | AGY model used for multimodal `agy` STT provider. |
+| `STT_LANGUAGE` | `en` | Default spoken language hint for STT (e.g. `de`, `en`). |
+| `TELEGRAM_STT_SHOW_TRANSCRIPT` | `1` | Send a preview bubble with transcribed text when session verbosity is detailed. |
+| `TTS_MODE` | `off` | Text-to-Speech playback mode: `off`, `auto`, `voice-only`, or `voice-and-text`. |
+| `TTS_VOICE` | `en-US-AndrewMultilingualNeural` | Edge-TTS voice identifier. |
+| `TTS_BIN` | `/usr/local/bin/edge-tts` | Executable path for `edge-tts`. |
+| `TTS_TIMEOUT_MS` | `25000` | Maximum timeout in ms for voice synthesis. |
 
 The configuration loader rejects missing tokens, empty user allowlists,
 invalid Telegram IDs, relative workspaces, unsupported modes or effort levels,
@@ -603,6 +722,13 @@ src/
 │   ├── callback-parser.ts      # Strongly-typed callback query parser
 │   └── auth.ts                 # User ID and chat ID allowlist authorization gate
 │
+├── stt/                        # Speech-to-Text Services
+│   ├── stt-service.ts          # Whisper-local, Gemini API & AGY STT providers
+│   └── whisper-detector.ts     # Detection and validation of local Whisper binaries
+│
+├── tts/                        # Text-to-Speech Services
+│   └── tts-service.ts          # Edge-TTS synthesis, text cleaning & FFmpeg conversion
+│
 ├── telegram/                   # Telegram Engine & Media Services
 │   ├── client.ts               # HTTP client with exponential backoff & IPv4-first DNS
 │   ├── markdown-renderer.ts    # Telegram HTML formatting, LaTeX conversion & chunking
@@ -623,7 +749,7 @@ src/
     ├── self-update.ts          # Git pull, TypeScript build, and systemd restart flow
     └── default-settings.ts     # Atomic default settings persistence to .env
 
-test/                           # Node Test Runner Suite (120 automated tests)
+test/                           # Node Test Runner Suite (170 automated tests)
 ├── agy-runner.test.ts          # Stream parser and process lifecycle tests
 ├── callback-parser.test.ts     # Typed callback parser tests
 ├── commands.test.ts            # Command execution and authorization parity tests
@@ -638,7 +764,10 @@ test/                           # Node Test Runner Suite (120 automated tests)
 ├── setup.test.ts               # Interactive setup wizard tests
 ├── smoke.test.ts               # End-to-end PTY and database smoke tests
 ├── state.test.ts               # State persistence and in-flight job recovery tests
+├── stt.test.ts                 # Speech-to-Text provider and routing tests
 ├── telegram.test.ts            # SSRF protection, LaTeX, HTML, and media resolver tests
+├── tts.test.ts                 # Text-to-Speech synthesis and edge-tts tests
+├── workspace.test.ts           # Workspace scoping and boundary isolation tests
 └── helpers/                    # Test fixtures, mock Telegram server, and utilities
 
 deploy/                         # Production systemd service unit & environment template
@@ -647,7 +776,7 @@ deploy/                         # Production systemd service unit & environment 
 
 ## Ecosystem & Complementary Tools
 
-- **[agy-memory-engine](https://github.com/sbolten/agy-memory-engine)** — A lightweight, local 4-layer cognitive long-term memory engine (Facts, Narrative Episodes, Learnings, Entity Graph) for Google Antigravity. Using AGY's lifecycle hooks, conversation turns from Telegram are automatically enqueued in `< 1ms` and consolidated into persistent SQLite FTS5 memory in the background with calm-memory session debouncing.
+- **[agy-memory-engine](https://github.com/HydStAn/agy-memory-engine)** — A lightweight, local 4-layer cognitive long-term memory engine (Facts, Narrative Episodes, Learnings, Entity Graph) for Google Antigravity. Using AGY's lifecycle hooks, conversation turns from Telegram are automatically enqueued in `< 1ms` and consolidated into persistent SQLite FTS5 memory in the background with calm-memory session debouncing.
 
 ## Limitations
 
