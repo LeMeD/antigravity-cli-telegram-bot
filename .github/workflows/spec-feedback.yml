@@ -25,7 +25,9 @@ jobs:
        contains(github.event.issue.labels.*.name, 'ready-for-dev') ||
        contains(github.event.issue.labels.*.name, 'idea') ||
        contains(github.event.issue.labels.*.name, 'enhancement')) &&
-      github.event.comment.user.login == github.repository_owner &&
+      (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) ||
+       github.event.comment.user.login == github.repository_owner ||
+       github.event.comment.user.login == 'LeMeD') &&
       !github.event.comment.performed_via_github_app
 
     runs-on: [self-hosted, antigravity]

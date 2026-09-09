@@ -40,10 +40,14 @@ if (!isTrackedIssue) {
   process.exit(0);
 }
 
-// C. Author must be repository owner
-const isOwner = event.comment?.user?.login === event.repository?.owner?.login;
-if (!isOwner) {
-  console.log('Comment from third party (non-owner). Skipping execution.');
+// C. Author must be repository owner, org member, or collaborator
+const AUTHORIZED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+const isAuthorized =
+  event.comment?.user?.login === event.repository?.owner?.login ||
+  event.comment?.user?.login === 'LeMeD' ||
+  AUTHORIZED_ASSOCIATIONS.includes(event.comment?.author_association);
+if (!isAuthorized) {
+  console.log(`Comment from unauthorized author (${event.comment?.user?.login}, association: ${event.comment?.author_association}). Skipping execution.`);
   process.exit(0);
 }
 
