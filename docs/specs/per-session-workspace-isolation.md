@@ -1,10 +1,10 @@
 # Spécifications fonctionnelles et techniques : Isolation de workspace par session (/workspace)
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification en cours de rédaction  
+> **Statut :** Spécification validée (prête pour implémentation)  
 > **Date de rédaction :** 03/09/2026 (actualisé le 08/09/2026)  
 > **Version cible :** v0.5.0  
-> **Issues associées :** [#26](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/26), [#6](https://github.com/LeMeD/agy-telegram-private/issues/6)
+> **Issues associées :** [#26](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/26), Issue #6, [PR amont #38](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/38)
 
 ---
 
@@ -152,5 +152,5 @@ export function resolveWorkspacePath(
 2. **Étape 2 : Autocomplétion native Telegram (`src/bot.ts`)** (ajout de `workspace` dans `BOT_COMMANDS`).
 3. **Étape 3 : Clavier interactif de sélection (`src/ui/inline-keyboards.ts`, `src/router/callbacks.ts`, `src/ui/screens.ts`)**.
 4. **Étape 4 : Bannière de rappel de workspace au prompt (`src/usecases/prompt-job.ts`)**.
-5. **Étape 5 : Mise à jour de la documentation (`README.md`, `BACKLOG.md`)** : harmonisation sous le sous-titre de section `#### Session Lifecycle and Scoping Behavior` et suppression des mentions résiduelles d'« Option A » (`README.md:L75`, `README.md:L295`).
+5. **Étape 5 : Mise à jour de la documentation (`README.md`, `BACKLOG.md`)** : suppression des mentions résiduelles d'« Option A » (`README.md:L75`, `README.md:L295`) sous le titre nominal `#### Lifecycle and Mental Model` (soumise dans la [PR amont #38](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/38)).
 6. **Étape 6 : Tests unitaires automatisés et validation de non-régression (`test/workspace.test.ts`)** : alignement de l'intitulé du test unitaire (`test/workspace.test.ts:L94`) sans mention d'Option A.
