@@ -22,6 +22,8 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/32
 - [x] **PR #38** : Nettoyage des mentions résiduelles d'« Option A » dans le `README.md` et alignement documentaire avec le standard nominal du bot. *(Fusionnée dans upstream/main, clôture l'issue #6)*
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/38
+- [x] **PR #41** : Refonte de `/menu` avec 3 profils d'interface (`daily`, `dev`, `mixed`), sélecteur de profil en direct, préchauffage Whisper non bloquant et renouvellement du statut de saisie Telegram. *(Fusionnée dans upstream/main)*
+  - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/41
 - [x] **Finalisation et intégration en production de la PR #30** :
   - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
 
