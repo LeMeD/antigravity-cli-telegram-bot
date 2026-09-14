@@ -24,24 +24,28 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/38
 - [x] **PR #41** : Refonte de `/menu` avec 3 profils d'interface (`daily`, `dev`, `mixed`), sélecteur de profil en direct, préchauffage Whisper non bloquant et renouvellement du statut de saisie Telegram. *(Fusionnée dans upstream/main)*
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/41
-- [x] **Finalisation et intégration en production de la PR #30** :
-  - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
+- [x] **PR #42 (Issue #40)** : Compaction de contexte orchestrateur via pipeline de passation 3 temps (`/compact`), télémétrie dynamique des jetons sur les boutons de menu, clavier inline sous `/context` et propagation de workspace via `--add-dir`. *(Fusionnée dans upstream/main, clôture l'issue #40)*
+  - Spécification : `docs/specs/orchestrator-context-compaction.md`
+  - Pull Request : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/42
+  - Issue résolue : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/40
+- [x] **Finalisation et intégration en production de la PR #42** :
+  - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
 
 ---
 
-## 2. Procédure opérationnelle de synchronisation post-fusion (PR #30)
+## 2. Procédure opérationnelle de synchronisation post-fusion (PR #42)
 
-Suite à la validation et fusion de la PR #30 par Ardian, la séquence suivante a été exécutée pour aligner l'instance locale en production :
+Suite à la validation et fusion de la PR #42 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
 
 ```bash
 # 1. Se positionner sur la branche principale et récupérer les commits fusionnés
 cd /home/med/projets/agy-telegram
 git checkout main
 git fetch upstream
-git merge upstream/main -m "merge: align with upstream/main after PR #30"
+git merge upstream/main -m "merge: align with upstream/main after PR #42 (orchestrator context compaction)"
 
 # 2. Rapatrier la documentation et actualiser le backlog
-git checkout feature/subagent-delegation-expandable-quote -- docs/ .agents/skills/telegram-test-runner/SKILL.md
+git checkout feature/orchestrator-context-compaction -- docs/specs/orchestrator-context-compaction.md
 # Actualisation de BACKLOG.md et commit documentaire
 
 # 3. Valider et compiler le code TypeScript
@@ -54,9 +58,12 @@ git push origin main
 git push private main
 
 # 5. Nettoyer les branches obsolètes
-git push fork --delete pr/feature/subagent-delegation-expandable-quote
-git push fork --delete feature/subagent-delegation-expandable-quote
-git branch -d feature/subagent-delegation-expandable-quote
+git push fork --delete pr/feature/orchestrator-context-compaction
+git push fork --delete feature/orchestrator-context-compaction
+git push origin --delete pr/feature/orchestrator-context-compaction
+git push origin --delete feature/orchestrator-context-compaction
+git push private --delete feature/orchestrator-context-compaction
+git branch -d feature/orchestrator-context-compaction
 
 # 6. Redémarrer le service systemd du bot
 systemctl --user restart agy-telegram
@@ -64,8 +71,9 @@ systemctl --user restart agy-telegram
 
 ### Vérifications post-bascule
 1. Contrôler le statut du service : `systemctl --user status agy-telegram`.
-2. Envoyer un prompt impliquant un sous-agent (ex. invocation de `research`) sur Telegram pour confirmer le repliement des étapes intermédiaires dans un bloc `<blockquote expandable>`.
-3. Vérifier la fluidité du ticker d'avancement et l'absence d'erreur dans les journaux : `journalctl --user -u agy-telegram -f`.
+2. Vérifier l'affichage du menu dynamique avec télémétrie des tokens (`/menu`).
+3. Tester la compaction de session avec `/compact` ou depuis le bouton inline sous `/context`.
+4. Vérifier la fluidité des réponses et l'absence d'erreur dans les journaux : `journalctl --user -u agy-telegram -f`.
 
 ---
 
