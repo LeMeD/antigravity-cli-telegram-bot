@@ -30,22 +30,25 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Issue résolue : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/40
 - [x] **Finalisation et intégration en production de la PR #42** :
   - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
+- [x] **PR #43** : Actualisation automatique de la télémétrie de contexte actif post-réponse via sonde PTY `/context`, rafraîchissement in-place multi-écrans du menu Telegram (`main` et `clitools`), et synthèse de compactage succincte sans préambule conversationnel avec extraction propre de l'objectif. *(Fusionnée dans upstream/main)*
+  - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/43
+- [x] **Finalisation et intégration en production de la PR #43** :
+  - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
 
 ---
 
-## 2. Procédure opérationnelle de synchronisation post-fusion (PR #42)
+## 2. Procédure opérationnelle de synchronisation post-fusion (PR #43)
 
-Suite à la validation et fusion de la PR #42 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
+Suite à la validation et fusion de la PR #43 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
 
 ```bash
 # 1. Se positionner sur la branche principale et récupérer les commits fusionnés
 cd /home/med/projets/agy-telegram
 git checkout main
 git fetch upstream
-git merge upstream/main -m "merge: align with upstream/main after PR #42 (orchestrator context compaction)"
+git merge upstream/main -m "merge: align with upstream/main after PR #43 (active context telemetry and compaction summary)"
 
-# 2. Rapatrier la documentation et actualiser le backlog
-git checkout feature/orchestrator-context-compaction -- docs/specs/orchestrator-context-compaction.md
+# 2. Actualiser le carnet de route (BACKLOG.md)
 # Actualisation de BACKLOG.md et commit documentaire
 
 # 3. Valider et compiler le code TypeScript
@@ -58,12 +61,10 @@ git push origin main
 git push private main
 
 # 5. Nettoyer les branches obsolètes
-git push fork --delete pr/feature/orchestrator-context-compaction
-git push fork --delete feature/orchestrator-context-compaction
-git push origin --delete pr/feature/orchestrator-context-compaction
-git push origin --delete feature/orchestrator-context-compaction
-git push private --delete feature/orchestrator-context-compaction
-git branch -d feature/orchestrator-context-compaction
+git push fork --delete pr/feature/active-context-telemetry feature/active-context-telemetry
+git push origin --delete pr/feature/active-context-telemetry feature/active-context-telemetry
+git push private --delete feature/active-context-telemetry
+git branch -d feature/active-context-telemetry
 
 # 6. Redémarrer le service systemd du bot
 systemctl --user restart agy-telegram
@@ -71,8 +72,8 @@ systemctl --user restart agy-telegram
 
 ### Vérifications post-bascule
 1. Contrôler le statut du service : `systemctl --user status agy-telegram`.
-2. Vérifier l'affichage du menu dynamique avec télémétrie des tokens (`/menu`).
-3. Tester la compaction de session avec `/compact` ou depuis le bouton inline sous `/context`.
+2. Vérifier l'actualisation passive de la télémétrie des tokens (`🧠 xxxk`) après chaque réponse.
+3. Vérifier le rafraîchissement in-place du clavier Telegram lors des transitions d'écrans.
 4. Vérifier la fluidité des réponses et l'absence d'erreur dans les journaux : `journalctl --user -u agy-telegram -f`.
 
 ---
@@ -87,4 +88,5 @@ systemctl --user restart agy-telegram
 - [ ] **Commandes rapides personnalisées** : Permettre la définition d'alias de prompts personnalisés depuis l'interface utilisateur ([Issue #4](https://github.com/LeMeD/agy-telegram-private/issues/4)).
 - [x] **Affichage en direct des transitions d'agents et délégation de sous-agents (Option 2.5)** : Ticker de progression compact et télémétrique pendant l'exécution, isolation des tours intermédiaires dans le flux de réponse et restitution sous forme de bloc de citation dépliable Telegram (`<blockquote expandable>`), évitant toute pollution du compte-rendu final ([Issue #29](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/29), [PR #30](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/30), [Spécifications](docs/specs/subagent-delegation-turn-isolation.md)). *(Fusionnée dans upstream/main)*
 - [x] **Environnement de recette et bot Telegram dédié aux tests** : Mise en place de la compétence locale de projet ([telegram-test-runner](.agents/skills/telegram-test-runner/SKILL.md)) et configuration isolée (`~/.config/agy-telegram-test/.env`) pour valider les évolutions sur le bot de test dédié (`8797558243`) avec cycle de vie éphémère (fermeture impérative du runner temporaire dès soumission de la PR).
+- [x] **Synchronisation en direct du contexte actif réel et rafraîchissement immédiat du menu** : Capture fidèle de la taille réelle de la mémoire vive du modèle (via les *input tokens* du dernier tour LLM plutôt que le cumul d'exécution global), fiabilisation du calcul mathématique du pourcentage dans `parseContextMetrics`, et réédition automatique en place du clavier du panneau de contrôle Telegram (`editMessageReplyMarkup`) dès que l'agent passe en stand-by ou que `/context` est rafraîchi ([PR #43](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/43)). *(Fusionnée dans upstream/main)*
 
