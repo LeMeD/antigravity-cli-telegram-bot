@@ -1,7 +1,7 @@
 # Spécifications fonctionnelles et techniques : Parité des fonctionnalités AGY CLI et directives de prompt
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification validée (Phase 1 prête pour implémentation)  
+> **Statut :** Spécification validée (prête pour implémentation)  
 > **Date de rédaction :** 18/09/2026  
 > **Version cible :** v0.6.0  
 > **Issue associée :** [#8](https://github.com/Homeboyz-IT/agy-telegram-private/issues/8)  
