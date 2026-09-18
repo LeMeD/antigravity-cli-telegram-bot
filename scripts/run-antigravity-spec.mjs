@@ -340,7 +340,15 @@ console.log(`Starting Antigravity CLI via ${AGY_BIN}...`);
 
 const agyProcess = spawn(
   AGY_BIN,
-  ['--print', agyPrompt, '--output-format', 'stream-json', '--dangerously-skip-permissions'],
+  [
+    '--print',
+    agyPrompt,
+    '--output-format',
+    'stream-json',
+    '--dangerously-skip-permissions',
+    '--print-timeout',
+    '20m',
+  ],
   {
     cwd: workspaceDir,
     env: {
