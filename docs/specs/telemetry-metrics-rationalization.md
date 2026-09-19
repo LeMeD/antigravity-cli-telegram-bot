@@ -4,7 +4,7 @@
 > **Statut :** Spécification en cours de rédaction  
 > **Date de rédaction :** 17/09/2026  
 > **Version cible :** v0.5.2  
-> **Issue associée :** [#9](https://github.com/Homeboyz-IT/agy-telegram-private/issues/9)  
+> **Issue associée :** [#9 (privée)](https://github.com/Homeboyz-IT/agy-telegram-private/issues/9) · [RFC upstream #47](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/47)  
 
 ---
 
