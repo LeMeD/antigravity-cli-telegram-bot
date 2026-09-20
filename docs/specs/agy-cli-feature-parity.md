@@ -1,11 +1,12 @@
 # Spécifications fonctionnelles et techniques : Parité des fonctionnalités AGY CLI et directives de prompt
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification validée (prête pour implémentation)  
-> **Date de rédaction :** 18/09/2026  
+> **Statut :** Phase 1 implémentée et soumise en PR amont (en attente de revue amont)  
+> **Date de rédaction :** 18/09/2026 (Actualisé le 20/09/2026)  
 > **Version cible :** v0.6.0  
 > **Issue associée :** [#8](https://github.com/Homeboyz-IT/agy-telegram-private/issues/8)  
 > **RFC amont associée :** [#46](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/46)  
+> **Pull Request amont :** [#48](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/48)  
 
 ---
 
@@ -145,3 +146,15 @@ sequenceDiagram
 4. **Étape 4 : Tests automatisés et recette mobile**
    - Rédaction des tests unitaires (`test/prompt-directives.test.ts`, `test/diff-command.test.ts`).
    - Validation sur bot de test dédié.
+
+---
+
+## 8. Bilan d'implémentation et soumission en Pull Request amont (Phase 1)
+
+Le développement et la qualification de la Phase 1 ont été validés avec succès le 20/09/2026 :
+* **Directives de prompt natives :** Passthrough direct et transparent vers `enqueueJob` dans `src/router/updates.ts` pour `/plan`, `/boost`, `/goal` et `/grill-me`. Rejet préservé (`Unknown command. Use /menu.`) pour toute commande non déclarée.
+* **Inspection Git adaptative (`/diff`) :** Implémentée dans `src/usecases/diff-command.ts` avec vérification de confinement (`isWithin`), affichage formaté inline dans `<pre><code class="language-diff">...</code></pre>` si le diff est inférieur à 3 000 caractères, et bascule automatique avec résumé `git diff --stat` et attachement d'un document `changes.diff` si volumineux.
+* **Renommage de session active (`/title`, `/rename`) :** Implémenté dans `src/usecases/title-command.ts` avec persistance SQLite via `convDb.updateConversationTitle` et répercussion immédiate dans `/resume`.
+* **Couverture de tests et recette :** 140+ tests unitaires automatisés validés au vert (`npm test`), recette interactive réussie sur le bot de test dédié (`Chromie_lemed_test_bot`), et arrêt propre du service temporaire.
+* **Pull Request amont :** Soumise vers le dépôt officiel sous la référence [ardiannurcahya/antigravity-cli-telegram-bot#48](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/48).
+
