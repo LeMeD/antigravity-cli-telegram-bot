@@ -34,23 +34,25 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Lien : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/43
 - [x] **Finalisation et intégration en production de la PR #43** :
   - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
-- [~] **PR #48 (RFC #46 / Issue #8)** : Parité des fonctionnalités AGY CLI - Phase 1 (Directives de prompt natives `/plan`, `/boost`, `/goal`, `/grill-me`, commande d'inspection Git `/diff` adaptative, et renommage de session active `/title` et `/rename`). *(Soumise en revue amont)*
+- [x] **PR #48 (RFC #46 / Issue #8)** : Parité des fonctionnalités AGY CLI - Phase 1 (Directives de prompt natives `/plan`, `/boost`, `/goal`, `/grill-me`, commande d'inspection Git `/diff` adaptative, et renommage de session active `/title` et `/rename`). *(Fusionnée dans upstream/main)*
   - Pull Request : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/48
   - RFC amont associée : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/46
   - Spécification : `docs/specs/agy-cli-feature-parity.md`
+- [x] **Finalisation et intégration en production de la PR #48** :
+  - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
 
 ---
 
-## 2. Procédure opérationnelle de synchronisation post-fusion (PR #43)
+## 2. Procédure opérationnelle de synchronisation post-fusion (PR #48)
 
-Suite à la validation et fusion de la PR #43 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
+Suite à la validation et fusion de la PR #48 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
 
 ```bash
 # 1. Se positionner sur la branche principale et récupérer les commits fusionnés
 cd /home/med/projets/agy-telegram
 git checkout main
 git fetch upstream
-git merge upstream/main -m "merge: align with upstream/main after PR #43 (active context telemetry and compaction summary)"
+git merge upstream/main -m "merge: align with upstream/main after PR #48 (Phase 1 prompt directives, adaptive /diff, /title)"
 
 # 2. Actualiser le carnet de route (BACKLOG.md)
 # Actualisation de BACKLOG.md et commit documentaire
@@ -65,20 +67,21 @@ git push origin main
 git push private main
 
 # 5. Nettoyer les branches obsolètes
-git push fork --delete pr/feature/active-context-telemetry feature/active-context-telemetry
-git push origin --delete pr/feature/active-context-telemetry feature/active-context-telemetry
-git push private --delete feature/active-context-telemetry
-git branch -d feature/active-context-telemetry
+git push fork --delete pr/feature/agy-cli-parity-phase-1 feature/agy-cli-parity-phase-1
+git push origin --delete pr/feature/agy-cli-parity-phase-1 feature/agy-cli-parity-phase-1
+git push private --delete feature/agy-cli-parity-phase-1
+git branch -D feature/agy-cli-parity-phase-1
 
 # 6. Redémarrer le service systemd du bot
-systemctl --user restart agy-telegram
+systemd-run --user --on-active=5s systemctl --user restart agy-telegram
 ```
 
 ### Vérifications post-bascule
 1. Contrôler le statut du service : `systemctl --user status agy-telegram`.
-2. Vérifier l'actualisation passive de la télémétrie des tokens (`🧠 xxxk`) après chaque réponse.
-3. Vérifier le rafraîchissement in-place du clavier Telegram lors des transitions d'écrans.
-4. Vérifier la fluidité des réponses et l'absence d'erreur dans les journaux : `journalctl --user -u agy-telegram -f`.
+2. Tester le passthrough des directives natives : `/plan`, `/boost`, `/goal`, `/grill-me`.
+3. Tester la commande Git diff adaptative : `/diff`.
+4. Tester le renommage de session active : `/title <nouveau titre>` ou `/rename <nouveau titre>`.
+5. Vérifier la fluidité des réponses et l'absence d'erreur dans les journaux : `journalctl --user -u agy-telegram -f`.
 
 ---
 
