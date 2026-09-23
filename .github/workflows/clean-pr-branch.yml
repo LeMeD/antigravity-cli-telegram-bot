@@ -43,7 +43,7 @@ jobs:
           git merge --squash "$SRC_BRANCH"
 
           # Remove internal fork items (roadmap, specs, local skills, internal scripts, and private workflows)
-          for target in BACKLOG.md docs .agents scripts .github/workflows/clean-pr-branch.yml .github/workflows/spec-feedback.yml; do
+          for target in BACKLOG.md docs .agents scripts .github/workflows/clean-pr-branch.yml .github/workflows/spec-feedback.yml AGENTS.md; do
             if [ -e "$target" ]; then
               echo "Removing internal item: $target"
               git rm -rf "$target"

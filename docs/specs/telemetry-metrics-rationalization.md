@@ -1,10 +1,11 @@
 # Spécifications fonctionnelles et techniques : Rationalisation de la télémétrie post-prompt et volet déroulant mobile
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification en cours de rédaction  
-> **Date de rédaction :** 17/09/2026  
-> **Version cible :** v0.5.2  
+> **Statut :** Validé, fusionné dans upstream/main (PR #50) et déployé en production  
+> **Date de rédaction :** 17/09/2026 (Actualisé le 23/09/2026)  
+> **Version cible :** v0.6.1  
 > **Issue associée :** [#9 (privée)](https://github.com/Homeboyz-IT/agy-telegram-private/issues/9) · [RFC upstream #47](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/47)  
+> **Pull Request amont :** [#50](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/50) (Fusionnée dans `upstream/main`)  
 
 ---
 
@@ -166,3 +167,26 @@ La citation se déplie pour afficher la grille d'évaluation complète :
    - Contrôle de la conversion en `<blockquote expandable>` via le parseur Markdown existant.
 4. **Étape 4 : Qualification et validation mobile**
    - Test en conditions réelles sur bot de test et vérification du comportement tactile sur mobile.
+
+---
+
+## 8. Bilan d'implémentation et ajustements d'architecture
+
+Le développement et la qualification de la télémétrie post-prompt ont été validés le 23/09/2026 avec les arbitrages techniques suivants :
+
+1. **Mode de livraison dédié (`TELEMETRY_POST_PROMPT=message`) :**
+   Plutôt que de concaténer le bloc de télémétrie en pied de la réponse textuelle du LLM (ce qui pouvait interférer avec les réponses longues fragmentées en plusieurs messages ou les blocs de code volumineux), la télémétrie est émise dans une bulle dédiée distincte (mise à jour du message de progression ou nouveau message repliable).
+   Le paramètre `TELEMETRY_POST_PROMPT` permet les modes : `message` (défaut), `inline` (pied de réponse), `progress` (texte brut historique) et `off`.
+
+2. **Structure explicite en deux volets (*This turn* vs *Session totals*) :**
+   - `⏱️ This turn` : Métriques propres à l'exécution courante (`Context growth`, `Thinking tokens`, `Tool calls`, `Response size`, `Model & duration`).
+   - `📊 Session totals` : Métriques cumulées sur l'ensemble de la conversation (`Active context`, `Prompt cache`, `Cumulative usage`, `Session duration`).
+
+3. **Accroissement net de contexte (`Context growth`) :**
+   Distinction claire entre la croissance nette apportée par le prompt courant (`+X tokens (feeds active context)`) et la taille totale de la fenêtre mémoire active (`Active context`).
+
+4. **Isolation de la durée réelle du run :**
+   Mesure locale du temps de traitement du run instantané (`durationMs`) afin de ne pas afficher la durée cumulée de session (`sessionDurationMs`) issue de `usage.duration_ms` de stream-json dans le titre du run.
+
+5. **Validation et couverture :**
+   16 tests unitaires dédiés à la télémétrie (`test/telemetry.test.ts`), suite complète de 213 tests au vert (`npm test`), et validation interactive sur le bot de test éphémère (`@Chromie_lemed_test_bot`).
