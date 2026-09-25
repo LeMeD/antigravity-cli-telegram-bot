@@ -47,19 +47,23 @@ Historiquement développé sur une version personnalisée (`agy-telegram-custom`
   - Spécification : `docs/specs/telemetry-metrics-rationalization.md`
 - [x] **Finalisation et intégration en production de la PR #50** :
   - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de feature et de PR, compilation TypeScript et rechargement du service systemd).
+- [x] **PR #51** : Suppression de l'en-tête redondant de workspace sur les messages de réponse finale (éliminant la régression d'affichage des balises HTML brutes) et harmonisation Markdown pour les notes de handover de compaction. *(Fusionnée dans upstream/main)*
+  - Pull Request : https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/pull/51
+- [x] **Finalisation et intégration en production de la PR #51** :
+  - Procédure de synchronisation exécutée avec succès (alignement sur upstream/main, synchronisation sur fork/main, origin/main et private/main, suppression des branches de fix et de PR, compilation TypeScript et rechargement du service systemd).
 
 ---
 
-## 2. Procédure opérationnelle de synchronisation post-fusion (PR #50)
+## 2. Procédure opérationnelle de synchronisation post-fusion (PR #51)
 
-Suite à la validation et fusion de la PR #50 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
+Suite à la validation et fusion de la PR #51 par Ardian (@ardiannurcahya), la séquence suivante a été exécutée pour aligner l'instance locale en production :
 
 ```bash
 # 1. Se positionner sur la branche principale et récupérer les commits fusionnés
 cd /home/med/projets/agy-telegram
 git checkout main
 git fetch upstream
-git merge upstream/main -m "merge: align with upstream/main after PR #50 (post-prompt telemetry)"
+git merge upstream/main -m "merge: align with upstream/main after PR #51 (workspace banner removal)"
 
 # 2. Actualiser le carnet de route (BACKLOG.md et spécifications)
 # Actualisation de BACKLOG.md et commit documentaire
