@@ -297,8 +297,8 @@ test("formats invoke_subagent tool calls with subagent role or type", () => {
 
 test("isWaitingResponseText accurately recognizes interim waiting messages", () => {
   assert.equal(isWaitingResponseText("Waiting for subagent response..."), true);
-  assert.equal(isWaitingResponseText("L'analyse se poursuit en tâche de fond, je suspends mes actions."), true);
-  assert.equal(isWaitingResponseText("En attente de la conclusion du sous-agent."), true);
+  assert.equal(isWaitingResponseText("The investigation continues in the background, suspending actions."), true);
+  assert.equal(isWaitingResponseText("Waiting for subagent completion."), true);
   assert.equal(isWaitingResponseText("Here is the final answer: All tests pass."), false);
   assert.equal(isWaitingResponseText(""), false);
 });

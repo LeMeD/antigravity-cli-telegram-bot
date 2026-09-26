@@ -199,7 +199,7 @@ export function normalizeUsage(value: unknown): Usage | null {
 
 export function isWaitingResponseText(text: string): boolean {
   if (!text) return false;
-  return /\b(wait|waiting|waits|suspends?|suspending|attente|attendant|en attente|t[âa]che de fond|background|in progress|en cours|proceeding|standby|stand-by|poll|polling|subagent.*launch|invok.*subagent|délég.*sous-agent)\b/i.test(text);
+  return /\b(wait|waiting|waits|suspends?|suspending|background|in progress|proceeding|standby|stand-by|poll|polling|subagent.*launch|invok.*subagent|delegat.*subagent)\b/i.test(text);
 }
 
 export function parseStreamOutput(stdout: string): AgyResult {
@@ -350,8 +350,9 @@ export function parseStreamOutput(stdout: string): AgyResult {
 
   const resolvedText = finalCleanText || (hasEncounteredToolCall && lastTurnText) || streamedResponse.trim() || (executionError ? `AGY could not complete the request.\n\n${executionError}` : "AGY returned no output.");
 
-  const isWaitingTurn = (hasInvokedSubagent && !hasReceivedSubagentResponse) ||
+  const isWaitingTurn =
     resolvedText.includes("[SUBAGENT_IN_PROGRESS]") ||
+    (hasInvokedSubagent && !hasReceivedSubagentResponse && isWaitingResponseText(resolvedText)) ||
     (isWaitingResponseText(resolvedText) && resolvedText.length < 500);
 
   const subagentState = hasInvokedSubagent || isWaitingTurn ? {
