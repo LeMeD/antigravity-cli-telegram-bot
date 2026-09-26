@@ -1,7 +1,7 @@
 # Spécifications fonctionnelles et techniques : Gestion du cycle de vie asynchrone des sous-agents et auto-notification Telegram
 
 > **Projet :** agy-telegram  
-> **Statut :** Spécification en cours de rédaction  
+> **Statut :** Spécification validée (prête pour implémentation)  
 > **Date de rédaction :** 20/09/2026  
 > **Version cible :** v0.5.0  
 > **Issues associées :** Issue privée [#10](https://github.com/Homeboyz-IT/agy-telegram-private/issues/10) · RFC amont [#49](https://github.com/ardiannurcahya/antigravity-cli-telegram-bot/issues/49)
